@@ -12,10 +12,19 @@ const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs');
 
-// Handwriting-style font stack (system fonts that look hand-drawn)
-// Use single quotes inside for XML compatibility
-const HANDWRITING_FONT = "Comic Sans MS, Marker Felt, Bradley Hand, cursive";
-const CLEAN_FONT = "Arial, Helvetica, sans-serif";
+const {
+  AnnotationError,
+  FileNotFoundError,
+  InvalidParameterError,
+  ImageProcessingError,
+  AnnotationTypeError
+} = require('./annotate-errors');
+
+// Handwriting-style font stack (more reliable cross-platform)
+const HANDWRITING_FONT = "Comic Sans MS, Chalkboard SE, Patrick Hand, cursive";
+
+// Clean sans-serif font stack
+const CLEAN_FONT = "Segoe UI, Helvetica Neue, Arial, sans-serif";
 
 // Professional color palette
 const COLORS = {
@@ -77,6 +86,74 @@ const THEMES = {
   }
 };
 
+// Text width estimation coefficient (average character width / font size ratio) for narrow-only text
+const TEXT_WIDTH_RATIO = 0.65;
+
+// CJK character ranges: CJK Unified, Hiragana/Katakana, Hangul (kept for backward compatibility)
+const CJK_REGEX = /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/;
+
+/**
+ * East Asian Width per UAX #11: returns display cell width (1 = narrow, 2 = wide).
+ * Used for mixed Latin+CJK text so each character is weighted correctly.
+ * Ranges: Wide (W) + Fullwidth (F) = 2; Narrow (Na), Neutral (N), Halfwidth (H), Ambiguous (A as narrow) = 1.
+ */
+const EAST_ASIAN_WIDE_RANGES = [
+  [0x3000, 0x303f],   // CJK symbols and punctuation
+  [0x3040, 0x309f],   // Hiragana
+  [0x30a0, 0x30ff],   // Katakana
+  [0x3100, 0x312f],   // Bopomofo
+  [0x3130, 0x318f],   // Hangul compatibility
+  [0x3190, 0x31bf],   // Kanbun, Bopomofo extended
+  [0x31c0, 0x31ef],   // CJK strokes
+  [0x31f0, 0x321f],   // Katakana extension
+  [0x3220, 0x3247],   // Enclosed CJK
+  [0x3250, 0x32fe],   // Enclosed CJK
+  [0x3300, 0x33ff],   // Katakana compat / CJK compat
+  [0x3400, 0x4dbf],   // CJK Unified Ideographs Extension A
+  [0x4e00, 0x9fff],   // CJK Unified Ideographs
+  [0xac00, 0xd7af],   // Hangul Syllables
+  [0xf900, 0xfaff],   // CJK Compatibility Ideographs
+  [0xff00, 0xffef],   // Fullwidth forms
+  [0x20000, 0x2fffd], // Supplementary Ideographic (Plane 2)
+  [0x30000, 0x3fffd], // Tertiary Ideographic (Plane 3)
+];
+
+function isEastAsianWide(codepoint) {
+  if (typeof codepoint !== 'number' || codepoint < 0) return false;
+  for (let i = 0; i < EAST_ASIAN_WIDE_RANGES.length; i++) {
+    const [lo, hi] = EAST_ASIAN_WIDE_RANGES[i];
+    if (codepoint >= lo && codepoint <= hi) return true;
+  }
+  return false;
+}
+
+/**
+ * Compute content width in px for one line using UAX #11 East Asian Width.
+ * Narrow = 0.5 em, Wide = 1 em (per UAX #11); width = totalEm * fontSize.
+ */
+function getTextContentWidthPx(line, fontSize) {
+  if (!line || typeof line !== 'string') return 0;
+  let totalEm = 0;
+  for (let i = 0; i < line.length; i++) {
+    const cp = line.codePointAt(i);
+    totalEm += isEastAsianWide(cp) ? 1 : 0.5;
+    if (cp > 0xffff) i++; // skip low surrogate
+  }
+  return totalEm * fontSize;
+}
+
+/** Return character-width ratio for text (CJK needs ~1.0, Latin ~0.65) to avoid label overflow.
+ * @deprecated Prefer getTextContentWidthPx(line, fontSize) for mixed scripts (UAX #11). */
+function getLabelTextWidthRatio(text) {
+  return CJK_REGEX.test(text) ? 1.0 : TEXT_WIDTH_RATIO;
+}
+
+// Default padding for callouts and labels
+const DEFAULT_PADDING = 14;
+
+// Line height coefficient
+const LINE_HEIGHT_RATIO = 1.5;
+
 /**
  * Escape XML special characters
  */
@@ -98,11 +175,13 @@ function getColor(color) {
 }
 
 /**
- * Generate unique ID for SVG elements
+ * Generate unique ID for SVG elements using crypto UUID
  */
-let idCounter = 0;
+const crypto = require('crypto');
+
 function generateId(prefix = 'ann') {
-  return `${prefix}-${++idCounter}`;
+  const randomPart = crypto.randomBytes(4).toString('hex');
+  return `${prefix}-${randomPart}`;
 }
 
 /**
@@ -275,11 +354,12 @@ function createCallout({ x, y, text, color = 'primary', background = 'white', wi
   const defs = [];
   const fontFamily = handwriting ? HANDWRITING_FONT : CLEAN_FONT;
 
-  // Calculate dimensions
+  // Calculate dimensions using UAX #11 East Asian Width (per-char) for mixed Latin+CJK
   const padding = 14;
   const lineHeight = fontSize * 1.5;
   const lines = text.split('\n');
-  const textWidth = width || Math.max(...lines.map(l => l.length * fontSize * 0.65)) + padding * 2;
+  const contentWidth = Math.max(0, ...lines.map(l => getTextContentWidthPx(l, fontSize)));
+  const textWidth = width || contentWidth + padding * 2;
   const textHeight = lines.length * lineHeight + padding * 2;
 
   // Add drop shadow
@@ -320,7 +400,8 @@ function createCallout({ x, y, text, color = 'primary', background = 'white', wi
       pointerPath = '';
   }
 
-  // Build text elements
+  // Build text elements: vertical center of first line at padding + lineHeight/2, then dy per line
+  const textY = boxY + padding + lineHeight / 2;
   const textElements = lines.map((line, i) =>
     `<tspan x="${boxX + padding}" dy="${i === 0 ? 0 : lineHeight}">${escapeXml(line)}</tspan>`
   ).join('');
@@ -330,7 +411,7 @@ function createCallout({ x, y, text, color = 'primary', background = 'white', wi
       <rect x="${boxX}" y="${boxY}" width="${textWidth}" height="${textHeight}"
             rx="10" fill="${bgColor}" stroke="${borderColor}" stroke-width="3" stroke-linejoin="round"/>
       ${pointerPath ? `<path d="${pointerPath}" fill="${bgColor}" stroke="${borderColor}" stroke-width="3" stroke-linejoin="round"/>` : ''}
-      <text x="${boxX + padding}" y="${boxY + padding + fontSize}"
+      <text x="${boxX + padding}" y="${textY}" dominant-baseline="middle"
             fill="${getColor('darkGray')}" font-size="${fontSize}" font-family="${fontFamily}" font-weight="600">
         ${textElements}
       </text>
@@ -389,7 +470,8 @@ function createCircle({ x, y, radius = 30, color = 'red', strokeWidth = 4, fill 
 }
 
 /**
- * Create text label with optional background (handwriting font support)
+ * Create text label with optional background (handwriting font support).
+ * Supports multi-line via \n; box width adapts to content (CJK-safe ratio).
  */
 function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight = '600', background = null, padding = 10, cornerRadius = 8, shadow = true, handwriting = true }) {
   const textColor = getColor(color);
@@ -398,9 +480,10 @@ function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight
   const elements = [];
   const fontFamily = handwriting ? HANDWRITING_FONT : CLEAN_FONT;
 
-  // Calculate text dimensions (slightly larger for handwriting font)
-  const textWidth = text.length * fontSize * 0.65;
-  const textHeight = fontSize * 1.3;
+  const lines = text.split('\n');
+  const lineHeight = fontSize * 1.3;
+  const textWidth = Math.max(0, ...lines.map(l => getTextContentWidthPx(l, fontSize)));
+  const textHeight = lines.length * lineHeight;
 
   if (shadow && background) {
     defs.push(createDropShadow(`${id}-shadow`, 4, 0.2));
@@ -417,9 +500,12 @@ function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight
     `);
   }
 
+  const textElements = lines.map((line, i) =>
+    `<tspan x="${x}" dy="${i === 0 ? 0 : lineHeight}">${escapeXml(line)}</tspan>`
+  ).join('');
   elements.push(`
     <text x="${x}" y="${y}" fill="${textColor}" font-size="${fontSize}"
-          font-weight="${fontWeight}" font-family="${fontFamily}">${escapeXml(text)}</text>
+          font-weight="${fontWeight}" font-family="${fontFamily}">${textElements}</text>
   `);
 
   return { defs: defs.join('\n'), element: elements.join('\n') };
@@ -548,6 +634,11 @@ function adjustColor(hex, amount) {
  * Build complete SVG from annotations
  */
 function buildSvg(width, height, annotations, theme = null) {
+  // Validate annotations array
+  if (!Array.isArray(annotations)) {
+    throw new InvalidParameterError('Annotations must be an array', 'annotations');
+  }
+
   // Reset ID counter for each build
   idCounter = 0;
 
@@ -631,12 +722,18 @@ function buildSvg(width, height, annotations, theme = null) {
 async function annotateImage(inputPath, outputPath, annotations, options = {}) {
   // Validate input
   if (!fs.existsSync(inputPath)) {
-    throw new Error(`Input file not found: ${inputPath}`);
+    throw new FileNotFoundError(inputPath);
   }
+
+  // Validate annotations
+  validateAnnotations(annotations);
 
   // Get image metadata
   const metadata = await sharp(inputPath).metadata();
   const { width, height } = metadata;
+
+  // Check image size
+  checkImageSize(metadata);
 
   // Build SVG overlay
   const svg = buildSvg(width, height, annotations, options.theme);
@@ -671,89 +768,73 @@ async function getImageDimensions(imagePath) {
 }
 
 /**
+ * Check image size and warn if large
+ */
+function checkImageSize(metadata) {
+  const pixels = metadata.width * metadata.height;
+  const FOUR_K_PIXELS = 3840 * 2160; // ~8.3MP
+
+  if (pixels > FOUR_K_PIXELS) {
+    console.warn(`Warning: Large image detected (${metadata.width}x${metadata.height}, ${(pixels/1000000).toFixed(1)}MP). Processing may be slow.`);
+  }
+
+  return pixels > FOUR_K_PIXELS;
+}
+
+/**
  * CLI entry point
  */
 async function main() {
-  const args = process.argv.slice(2);
+  // CLI argument parsing with minimist
+  const args = require('minimist')(process.argv.slice(2), {
+    string: ['annotations', 'theme'],
+    boolean: ['help', 'h'],
+    alias: { h: 'help' }
+  });
 
-  if (args.length < 2 || args.includes('--help') || args.includes('-h')) {
+  if (args.help) {
     console.log(`
-Image Annotator - Professional screenshot annotation tool
+Image Annotator CLI
 
-Usage:
-  node annotate.js <input> <output> --annotations '<json>' [--theme <name>]
+Usage: node annotate.js <input> <output> [options]
 
-Annotation Types:
-  marker      Numbered circle (1, 2, 3...) with shadow
-              { type: "marker", x, y, number, color?, size?, style?: "filled"|"outline"|"badge" }
+Options:
+  --annotations, -a  JSON array of annotations (required)
+  --theme, -t        Theme name (documentation|tutorial|bugReport|highlight)
+  --help, -h          Show this help message
 
-  arrow       Straight arrow with arrowhead
-              { type: "arrow", from: [x,y], to: [x,y], color?, strokeWidth?, style?: "solid"|"dashed" }
-
-  curved-arrow  Curved bezier arrow
-              { type: "curved-arrow", from: [x,y], to: [x,y], curve?, color? }
-
-  callout     Text box with pointer
-              { type: "callout", x, y, text, pointer?: "top"|"bottom"|"left"|"right", color?, background? }
-
-  rect        Rectangle highlight
-              { type: "rect", x, y, width, height, color?, cornerRadius?, style?: "solid"|"dashed" }
-
-  circle      Circle highlight
-              { type: "circle", x, y, radius, color?, style?: "solid"|"dashed" }
-
-  label       Text label with optional background
-              { type: "label", x, y, text, color?, fontSize?, background? }
-
-  highlight   Semi-transparent overlay
-              { type: "highlight", x, y, width, height, color?, opacity? }
-
-  blur        Blur sensitive content
-              { type: "blur", x, y, width, height, intensity? }
-
-  connector   Dashed line between points
-              { type: "connector", from: [x,y], to: [x,y], color? }
-
-  icon        Icon badge (check, x, warning, info, question)
-              { type: "icon", x, y, icon, color?, size? }
-
-Themes: documentation, tutorial, bugReport, highlight
-
-Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
-        white, black, gray, lightGray, darkGray,
-        success, warning, error, info, primary, secondary, accent
-
-Example:
-  node annotate.js screenshot.png annotated.png --theme documentation --annotations '[
-    {"type": "marker", "x": 200, "y": 100, "number": 1},
-    {"type": "arrow", "from": [230, 100], "to": [350, 150]},
-    {"type": "callout", "x": 400, "y": 180, "text": "Click here to continue", "pointer": "left"}
-  ]'
-    `);
-    process.exit(args.includes('--help') || args.includes('-h') ? 0 : 1);
+Examples:
+  node annotate.js input.png output.png --annotations='[{"type":"marker","x":100,"y":100,"number":1}]'
+  node annotate.js input.png output.png --annotations '[{"type":"arrow","from":[0,0],"to":[100,100]}]' --theme tutorial
+`);
+    process.exit(0);
   }
 
-  const inputPath = args[0];
-  const outputPath = args[1];
+  const inputPath = args._[0];
+  const outputPath = args._[1];
 
-  // Parse options
-  const annotationsIndex = args.indexOf('--annotations');
-  const themeIndex = args.indexOf('--theme');
+  if (!inputPath || !outputPath) {
+    console.error('Error: input and output paths required');
+    console.error('Usage: node annotate.js <input> <output> --annotations JSON');
+    process.exit(1);
+  }
 
-  if (annotationsIndex === -1 || !args[annotationsIndex + 1]) {
+  if (!args.annotations) {
     console.error('Error: --annotations required');
     process.exit(1);
   }
 
   let annotations;
   try {
-    annotations = JSON.parse(args[annotationsIndex + 1]);
+    annotations = typeof args.annotations === 'string' 
+      ? JSON.parse(args.annotations) 
+      : args.annotations;
   } catch (e) {
     console.error('Error parsing annotations JSON:', e.message);
     process.exit(1);
   }
 
-  const theme = themeIndex !== -1 ? args[themeIndex + 1] : null;
+  const theme = args.theme || null;
 
   try {
     const result = await annotateImage(inputPath, outputPath, annotations, { theme });
@@ -772,8 +853,43 @@ module.exports = {
   buildSvg,
   getImageDimensions,
   COLORS,
-  THEMES
+  THEMES,
+  // Validation functions
+  validateAnnotation,
+  validateAnnotations,
+  validateImagePath
 };
+
+// Validation functions
+function validateAnnotation(ann) {
+  if (!ann || typeof ann !== 'object') {
+    throw new ValidationError('Annotation must be an object');
+  }
+  if (typeof ann.type !== 'string') {
+    throw new ValidationError('Annotation must have a type');
+  }
+  if (ann.type === 'marker' || ann.type === 'arrow') {
+    if (typeof ann.x !== 'number' || typeof ann.y !== 'number') {
+      throw new ValidationError('Marker/arrow annotations require x and y coordinates');
+    }
+  }
+  return true;
+}
+
+function validateAnnotations(annotations) {
+  if (!Array.isArray(annotations)) {
+    throw new ValidationError('Annotations must be an array');
+  }
+  annotations.forEach((ann, i) => validateAnnotation(ann));
+  return true;
+}
+
+function validateImagePath(imagePath) {
+  if (!imagePath || typeof imagePath !== 'string') {
+    throw new ValidationError('Image path must be a string');
+  }
+  return true;
+}
 
 // Run CLI if executed directly
 if (require.main === module) {

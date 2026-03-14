@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image Annotator 预览</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f5f5;
+      color: #333;
+      line-height: 1.6;
+    }
+
+    header {
+      background: linear-gradient(135deg, #1E88E5, #1565C0);
+      color: white;
+      padding: 24px 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+
+    header h1 {
+      font-size: 24px;
+      font-weight: 600;
+    }
+
+    header button {
+      background: white;
+      color: #1E88E5;
+      border: none;
+      padding: 10px 24px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    header button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    }
+
+    main {
+      padding: 24px 32px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    section {
+      margin-bottom: 32px;
+    }
+
+    h2 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #e0e0e0;
+    }
+
+    .color-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 12px;
+    }
+
+    .color-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: white;
+      border-radius: 6px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .color-swatch {
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      border: 1px solid rgba(0,0,0,0.1);
+    }
+
+    .color-name {
+      font-size: 13px;
+      color: #666;
+    }
+
+    .theme-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 16px;
+    }
+
+    .theme-card {
+      background: white;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .theme-card h3 {
+      background: #f0f0f0;
+      padding: 12px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      border-bottom: 1px solid #e0e0e0;
+    }
+
+    .theme-preview {
+      padding: 16px;
+    }
+
+    .annotation-section {
+      margin-bottom: 40px;
+    }
+
+    .annotation-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+      gap: 20px;
+    }
+
+    .annotation-card {
+      background: white;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .annotation-card h3 {
+      background: #f8f9fa;
+      padding: 12px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      border-bottom: 1px solid #e0e0e0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .annotation-card .type-badge {
+      font-size: 11px;
+      background: #e3f2fd;
+      color: #1565C0;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-weight: 500;
+    }
+
+    .annotation-preview {
+      position: relative;
+      background: linear-gradient(45deg, #e8e8e8 25%, transparent 25%),
+                  linear-gradient(-45deg, #e8e8e8 25%, transparent 25%),
+                  linear-gradient(45deg, transparent 75%, #e8e8e8 75%),
+                  linear-gradient(-45deg, transparent 75%, #e8e8e8 75%);
+      background-size: 20px 20px;
+      background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+      background-color: #f0f0f0;
+    }
+
+    .annotation-preview img,
+    .annotation-preview svg {
+      display: block;
+      max-width: 100%;
+      height: auto;
+    }
+
+    .annotation-info {
+      padding: 12px 16px;
+      background: #fafafa;
+      border-top: 1px solid #eee;
+      font-size: 12px;
+      color: #666;
+    }
+
+    .annotation-info code {
+      background: #f0f0f0;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 11px;
+    }
+
+    footer {
+      text-align: center;
+      padding: 24px;
+      color: #888;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Image Annotator 预览</h1>
+    <button onclick="location.reload()">刷新页面</button>
+  </header>
+
+  <main>
+    <!-- 颜色展示 -->
+    <section>
+      <h2>预设颜色</h2>
+      <div class="color-grid" id="color-grid"></div>
+    </section>
+
+    <!-- 主题展示 -->
+    <section>
+      <h2>主题效果</h2>
+      <div class="theme-grid" id="theme-grid"></div>
+    </section>
+
+    <!-- 标注类型 -->
+    <section>
+      <h2>标注类型</h2>
+      <div class="annotation-grid" id="annotation-grid"></div>
+    </section>
+  </main>
+
+  <footer>
+    每次刷新页面将重新渲染所有示例
+  </footer>
+
+  <script>
+    // ============================================
+    // 核心函数复刻（纯浏览器端，无 Node 依赖）
+    // ============================================
+
+    const COLORS = {
+      red: '#E53935', orange: '#FB8C00', yellow: '#FDD835', green: '#43A047',
+      blue: '#1E88E5', purple: '#8E24AA', pink: '#D81B60', cyan: '#00ACC1',
+      teal: '#00897B', white: '#FFFFFF', black: '#212121', gray: '#757575',
+      lightGray: '#E0E0E0', darkGray: '#424242', success: '#4CAF50',
+      warning: '#FF9800', error: '#F44336', info: '#2196F3',
+      primary: '#1976D2', secondary: '#7B1FA2', accent: '#FF4081'
+    };
+
+    const HANDWRITING_FONT = "Comic Sans MS, Chalkboard SE, Patrick Hand, cursive";
+    const CLEAN_FONT = "Segoe UI, Helvetica Neue, Arial, sans-serif";
+    const TEXT_WIDTH_RATIO = 0.65;
+    const CJK_REGEX = /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/;
+    // East Asian Width (UAX #11): Wide/Fullwidth = 2 cells, else 1
+    const EAST_ASIAN_WIDE_RANGES = [
+      [0x3000, 0x303f], [0x3040, 0x309f], [0x30a0, 0x30ff], [0x3100, 0x312f], [0x3130, 0x318f],
+      [0x3190, 0x31bf], [0x31c0, 0x31ef], [0x31f0, 0x321f], [0x3220, 0x3247], [0x3250, 0x32fe],
+      [0x3300, 0x33ff], [0x3400, 0x4dbf], [0x4e00, 0x9fff], [0xac00, 0xd7af], [0xf900, 0xfaff],
+      [0xff00, 0xffef], [0x20000, 0x2fffd], [0x30000, 0x3fffd]
+    ];
+    function isEastAsianWide(codepoint) {
+      if (typeof codepoint !== 'number' || codepoint < 0) return false;
+      for (let i = 0; i < EAST_ASIAN_WIDE_RANGES.length; i++) {
+        const [lo, hi] = EAST_ASIAN_WIDE_RANGES[i];
+        if (codepoint >= lo && codepoint <= hi) return true;
+      }
+      return false;
+    }
+    function getTextContentWidthPx(line, fontSize) {
+      if (!line || typeof line !== 'string') return 0;
+      let totalEm = 0;
+      for (let i = 0; i < line.length; i++) {
+        const cp = line.codePointAt(i);
+        totalEm += isEastAsianWide(cp) ? 1 : 0.5;
+        if (cp > 0xffff) i++;
+      }
+      return totalEm * fontSize;
+    }
+    function getLabelTextWidthRatio(text) {
+      return CJK_REGEX.test(text) ? 1.0 : TEXT_WIDTH_RATIO;
+    }
+    let idCounter = 0;
+
+    function generateId(prefix = 'ann') {
+      return `${prefix}-${Date.now()}-${idCounter++}`;
+    }
+
+    function escapeXml(text) {
+      if (typeof text !== 'string') return String(text);
+      return text.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+    }
+
+    function getColor(color) {
+      return COLORS[color] || color || COLORS.red;
+    }
+
+    function adjustColor(hex, amount) {
+      const num = parseInt(hex.replace('#', ''), 16);
+      const r = Math.min(255, Math.max(0, (num >> 16) + amount));
+      const g = Math.min(255, Math.max(0, ((num >> 8) & 0x00FF) + amount));
+      const b = Math.min(255, Math.max(0, (num & 0x0000FF) + amount));
+      return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+    }
+
+    function createDropShadow(id, blur = 4, opacity = 0.3) {
+      return `<filter id="${id}" x="-50%" y="-50%" width="200%" height="200%">
+        <feDropShadow dx="2" dy="2" stdDeviation="${blur}" flood-opacity="${opacity}"/></filter>`;
+    }
+
+    function createMarker({ x, y, number, color = 'red', size = 32, shadow = true, style = 'filled' }) {
+      const c = getColor(color);
+      const id = generateId('marker');
+      const defs = [];
+      const elements = [];
+
+      if (shadow) defs.push(createDropShadow(`${id}-shadow`));
+
+      const gradientId = `${id}-gradient`;
+      defs.push(`<linearGradient id="${gradientId}" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" style="stop-color:${c};stop-opacity:1" />
+        <stop offset="100%" style="stop-color:${adjustColor(c, -30)};stop-opacity:1" /></linearGradient>`);
+
+      const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+
+      if (style === 'filled') {
+        elements.push(`<circle cx="${x}" cy="${y}" r="${size}" fill="url(#${gradientId})" ${filterAttr}/>
+          <circle cx="${x}" cy="${y}" r="${size - 2}" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+          <text x="${x}" y="${y + size * 0.35}" text-anchor="middle" fill="white"
+            font-size="${size * 0.9}" font-weight="bold" font-family="Arial">${number}</text>`);
+      } else if (style === 'outline') {
+        elements.push(`<circle cx="${x}" cy="${y}" r="${size}" fill="white" stroke="${c}" stroke-width="3" ${filterAttr}/>
+          <text x="${x}" y="${y + size * 0.35}" text-anchor="middle" fill="${c}"
+            font-size="${size * 0.9}" font-weight="bold" font-family="Arial">${number}</text>`);
+      } else if (style === 'badge') {
+        const isMultiDigit = number > 9;
+        const width = isMultiDigit ? size * 1.6 : size * 2;
+        const height = size * 2;
+        elements.push(`<rect x="${x - width / 2}" y="${y - height / 2}" width="${width}" height="${height}"
+          rx="${height / 2}" fill="url(#${gradientId})" ${filterAttr}/>
+          <text x="${x}" y="${y + size * 0.35}" text-anchor="middle" fill="white"
+            font-size="${size * 0.9}" font-weight="bold" font-family="Arial">${number}</text>`);
+      }
+
+      return { defs: defs.join('\n'), element: elements.join('\n') };
+    }
+
+    function createArrow({ from, to, color = 'red', strokeWidth = 5, style = 'solid', headStyle = 'filled', shadow = true }) {
+      const c = getColor(color);
+      const [x1, y1] = from;
+      const [x2, y2] = to;
+      const id = generateId('arrow');
+      const defs = [];
+
+      if (shadow) defs.push(createDropShadow(`${id}-shadow`, 2, 0.2));
+
+      const headSize = Math.max(10, strokeWidth * 3);
+      if (headStyle === 'filled') {
+        defs.push(`<marker id="${id}-head" markerWidth="${headSize}" markerHeight="${headSize * 0.7}"
+          refX="${headSize - 1}" refY="${headSize * 0.35}" orient="auto" markerUnits="userSpaceOnUse">
+          <polygon points="0 0, ${headSize} ${headSize * 0.35}, 0 ${headSize * 0.7}" fill="${c}"/></marker>`);
+      } else {
+        defs.push(`<marker id="${id}-head" markerWidth="${headSize}" markerHeight="${headSize * 0.7}"
+          refX="${headSize - 1}" refY="${headSize * 0.35}" orient="auto" markerUnits="userSpaceOnUse">
+          <polyline points="0 0, ${headSize} ${headSize * 0.35}, 0 ${headSize * 0.7}"
+            fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round"/></marker>`);
+      }
+
+      const dashArray = style === 'dashed' ? 'stroke-dasharray="10,5"' : '';
+      const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+
+      return { defs: defs.join('\n'), element: `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
+        stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"
+        marker-end="url(#${id}-head)" ${dashArray} ${filterAttr}/>` };
+    }
+
+    function createCurvedArrow({ from, to, curve = 50, color = 'red', strokeWidth = 5, headStyle = 'filled', shadow = true }) {
+      const c = getColor(color);
+      const [x1, y1] = from;
+      const [x2, y2] = to;
+      const id = generateId('curved-arrow');
+      const defs = [];
+
+      const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
+      const dx = x2 - x1, dy = y2 - y1;
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      const nx = -dy / len, ny = dx / len;
+      const cx = midX + nx * curve, cy = midY + ny * curve;
+
+      if (shadow) defs.push(createDropShadow(`${id}-shadow`, 2, 0.2));
+
+      const headSize = Math.max(10, strokeWidth * 3);
+      defs.push(`<marker id="${id}-head" markerWidth="${headSize}" markerHeight="${headSize * 0.7}"
+        refX="${headSize - 1}" refY="${headSize * 0.35}" orient="auto" markerUnits="userSpaceOnUse">
+        <polygon points="0 0, ${headSize} ${headSize * 0.35}, 0 ${headSize * 0.7}" fill="${c}"/></marker>`);
+
+      const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+
+      return { defs: defs.join('\n'), element: `<path d="M${x1},${y1} Q${cx},${cy} ${x2},${y2}"
+        fill="none" stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"
+        marker-end="url(#${id}-head)" ${filterAttr}/>` };
+    }
+
+    function createCallout({ x, y, text, color = 'primary', background = 'white', width = null, pointer = 'bottom', fontSize = 18, shadow = true, handwriting = true }) {
+      const borderColor = getColor(color);
+      const bgColor = getColor(background);
+      const id = generateId('callout');
+      const defs = [];
+      const fontFamily = handwriting ? HANDWRITING_FONT : CLEAN_FONT;
+
+      const padding = 14;
+      const lineHeight = fontSize * 1.5;
+      const lines = text.split('\n');
+      const contentWidth = Math.max(0, ...lines.map(l => getTextContentWidthPx(l, fontSize)));
+      const textWidth = width || contentWidth + padding * 2;
+      const textHeight = lines.length * lineHeight + padding * 2;
+
+      if (shadow) defs.push(createDropShadow(`${id}-shadow`, 4, 0.15));
+      const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+
+      let boxX, boxY, pointerPath;
+      const pointerSize = 12;
+
+      switch (pointer) {
+        case 'top':
+          boxX = x - textWidth / 2; boxY = y + pointerSize;
+          pointerPath = `M${x - pointerSize},${y + pointerSize} L${x},${y} L${x + pointerSize},${y + pointerSize}`;
+          break;
+        case 'bottom':
+          boxX = x - textWidth / 2; boxY = y - textHeight - pointerSize;
+          pointerPath = `M${x - pointerSize},${y - pointerSize} L${x},${y} L${x + pointerSize},${y - pointerSize}`;
+          break;
+        case 'left':
+          boxX = x + pointerSize; boxY = y - textHeight / 2;
+          pointerPath = `M${x + pointerSize},${y - pointerSize} L${x},${y} L${x + pointerSize},${y + pointerSize}`;
+          break;
+        case 'right':
+          boxX = x - textWidth - pointerSize; boxY = y - textHeight / 2;
+          pointerPath = `M${x - pointerSize},${y - pointerSize} L${x},${y} L${x - pointerSize},${y + pointerSize}`;
+          break;
+        default:
+          boxX = x; boxY = y; pointerPath = '';
+      }
+
+      const textY = boxY + padding + lineHeight / 2;
+      const textElements = lines.map((line, i) =>
+        `<tspan x="${boxX + padding}" dy="${i === 0 ? 0 : lineHeight}">${escapeXml(line)}</tspan>`
+      ).join('');
+
+      return { defs: defs.join('\n'), element: `<g ${filterAttr}>
+        <rect x="${boxX}" y="${boxY}" width="${textWidth}" height="${textHeight}"
+          rx="10" fill="${bgColor}" stroke="${borderColor}" stroke-width="3" stroke-linejoin="round"/>
+        ${pointerPath ? `<path d="${pointerPath}" fill="${bgColor}" stroke="${borderColor}" stroke-width="3" stroke-linejoin="round"/>` : ''}
+        <text x="${boxX + padding}" y="${textY}" dominant-baseline="middle"
+          fill="${getColor('darkGray')}" font-size="${fontSize}" font-family="${fontFamily}" font-weight="600">
+          ${textElements}</text></g>` };
+    }
+
+    function createRect({ x, y, width, height, color = 'red', strokeWidth = 4, fill = 'none', cornerRadius = 12, style = 'solid', shadow = false }) {
+      const c = getColor(color);
+      const fillColor = fill === 'none' ? 'none' : getColor(fill);
+      const id = generateId('rect');
+      const defs = [];
+
+      if (shadow) defs.push(createDropShadow(`${id}-shadow`));
+
+      const dashArray = style === 'dashed' ? 'stroke-dasharray="12,6"' : '';
+      const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+
+      return { defs: defs.join('\n'), element: `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${cornerRadius}"
+        fill="${fillColor}" stroke="${c}" stroke-width="${strokeWidth}" stroke-linejoin="round" ${dashArray} ${filterAttr}/>` };
+    }
+
+    function createCircle({ x, y, radius = 30, color = 'red', strokeWidth = 4, fill = 'none', style = 'solid', shadow = false }) {
+      const c = getColor(color);
+      const fillColor = fill === 'none' ? 'none' : getColor(fill);
+      const id = generateId('circle');
+      const defs = [];
+
+      if (shadow) defs.push(createDropShadow(`${id}-shadow`));
+
+      const dashArray = style === 'dashed' ? 'stroke-dasharray="8,4"' : '';
+      const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+
+      return { defs: defs.join('\n'), element: `<circle cx="${x}" cy="${y}" r="${radius}"
+        fill="${fillColor}" stroke="${c}" stroke-width="${strokeWidth}" ${dashArray} ${filterAttr}/>` };
+    }
+
+    function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight = '600', background = null, padding = 10, cornerRadius = 8, shadow = true, handwriting = true }) {
+      const textColor = getColor(color);
+      const id = generateId('label');
+      const defs = [];
+      const elements = [];
+      const fontFamily = handwriting ? HANDWRITING_FONT : CLEAN_FONT;
+
+      const lines = text.split('\n');
+      const lineHeight = fontSize * 1.3;
+      const textWidth = Math.max(0, ...lines.map(l => getTextContentWidthPx(l, fontSize)));
+      const textHeight = lines.length * lineHeight;
+
+      if (shadow && background) defs.push(createDropShadow(`${id}-shadow`, 4, 0.2));
+      const filterAttr = (shadow && background) ? `filter="url(#${id}-shadow)"` : '';
+
+      if (background) {
+        const bgColor = getColor(background);
+        elements.push(`<rect x="${x - padding}" y="${y - textHeight - padding + 4}"
+          width="${textWidth + padding * 2}" height="${textHeight + padding * 2}"
+          rx="${cornerRadius}" fill="${bgColor}" stroke="${textColor}" stroke-width="2" stroke-linejoin="round" ${filterAttr}/>`);
+      }
+
+      const textElements = lines.map((line, i) =>
+        `<tspan x="${x}" dy="${i === 0 ? 0 : lineHeight}">${escapeXml(line)}</tspan>`
+      ).join('');
+      elements.push(`<text x="${x}" y="${y}" fill="${textColor}" font-size="${fontSize}"
+        font-weight="${fontWeight}" font-family="${fontFamily}">${textElements}</text>`);
+
+      return { defs: defs.join('\n'), element: elements.join('\n') };
+    }
+
+    function createHighlight({ x, y, width, height, color = 'yellow', opacity = 0.35, cornerRadius = 0 }) {
+      const c = getColor(color);
+      return { defs: '', element: `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${cornerRadius}" fill="${c}" opacity="${opacity}"/>` };
+    }
+
+    function createBlur({ x, y, width, height, intensity = 8 }) {
+      const id = generateId('blur');
+      return { defs: `<filter id="${id}"><feGaussianBlur stdDeviation="${intensity}"/></filter>`,
+        element: `<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="#808080" filter="url(#${id})"/>` };
+    }
+
+    function createConnector({ from, to, color = 'gray', strokeWidth = 3, style = 'dashed' }) {
+      const c = getColor(color);
+      const [x1, y1] = from, [x2, y2] = to;
+      const dashArray = style === 'dashed' ? 'stroke-dasharray="8,5"' : '';
+      return { defs: '', element: `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" ${dashArray}/>` };
+    }
+
+    function createIcon({ x, y, icon, color = 'green', size = 28, shadow = true }) {
+      const c = getColor(color);
+      const id = generateId('icon');
+      const defs = [];
+      if (shadow) defs.push(createDropShadow(`${id}-shadow`));
+      const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+
+      let iconPath;
+      switch (icon) {
+        case 'check': case 'checkmark':
+          iconPath = `<path d="M${x - size * 0.3},${y} L${x - size * 0.1},${y + size * 0.25} L${x + size * 0.35},${y - size * 0.25}" fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>`;
+          break;
+        case 'x': case 'cross':
+          iconPath = `<line x1="${x - size * 0.2}" y1="${y - size * 0.2}" x2="${x + size * 0.2}" y2="${y + size * 0.2}" stroke="white" stroke-width="4" stroke-linecap="round"/>
+            <line x1="${x + size * 0.2}" y1="${y - size * 0.2}" x2="${x - size * 0.2}" y2="${y + size * 0.2}" stroke="white" stroke-width="4" stroke-linecap="round"/>`;
+          break;
+        case 'warning': case '!':
+          iconPath = `<line x1="${x}" y1="${y - size * 0.15}" x2="${x}" y2="${y + size * 0.05}" stroke="white" stroke-width="4" stroke-linecap="round"/>
+            <circle cx="${x}" cy="${y + size * 0.25}" r="3" fill="white"/>`;
+          break;
+        case 'info': case 'i':
+          iconPath = `<circle cx="${x}" cy="${y - size * 0.2}" r="3" fill="white"/>
+            <line x1="${x}" y1="${y - size * 0.05}" x2="${x}" y2="${y + size * 0.25}" stroke="white" stroke-width="4" stroke-linecap="round"/>`;
+          break;
+        case 'question': case '?':
+          iconPath = `<path d="M${x - size * 0.15},${y - size * 0.25} Q${x - size * 0.15},${y - size * 0.4} ${x},${y - size * 0.4} Q${x + size * 0.2},${y - size * 0.4} ${x + size * 0.2},${y - size * 0.2} Q${x + size * 0.2},${y - size * 0.05} ${x},${y}" fill="none" stroke="white" stroke-width="3.5" stroke-linecap="round"/>
+            <circle cx="${x}" cy="${y + size * 0.2}" r="3" fill="white"/>`;
+          break;
+        default: iconPath = '';
+      }
+
+      return { defs: defs.join('\n'), element: `<g ${filterAttr}><circle cx="${x}" cy="${y}" r="${size}" fill="${c}"/>${iconPath}</g>` };
+    }
+
+    function buildSvg(width, height, annotations) {
+      idCounter = 0;
+      const defs = [], elements = [];
+
+      for (const ann of annotations) {
+        let result;
+        switch (ann.type) {
+          case 'marker': case 'number': result = createMarker(ann); break;
+          case 'arrow': result = createArrow(ann); break;
+          case 'curved-arrow': case 'curvedArrow': result = createCurvedArrow(ann); break;
+          case 'callout': result = createCallout(ann); break;
+          case 'rect': case 'rectangle': case 'box': result = createRect(ann); break;
+          case 'circle': result = createCircle(ann); break;
+          case 'label': case 'text': result = createLabel(ann); break;
+          case 'highlight': result = createHighlight(ann); break;
+          case 'blur': result = createBlur(ann); break;
+          case 'connector': case 'line': result = createConnector(ann); break;
+          case 'icon': result = createIcon(ann); break;
+          default: console.warn(`Unknown annotation type: ${ann.type}`); continue;
+        }
+        if (result) {
+          if (result.defs) defs.push(result.defs);
+          if (result.element) elements.push(result.element);
+        }
+      }
+
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+  <defs>${defs.join('\n')}</defs>
+  ${elements.join('\n')}
+</svg>`;
+    }
+
+    function svgToDataUrl(svg) {
+      return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+    }
+
+    // ============================================
+    // 示例数据
+    // ============================================
+
+    const EXAMPLES = {
+      // 颜色示例
+      colors: Object.entries(COLORS).filter(([k]) => !['lightGray', 'darkGray', 'gray'].includes(k)),
+
+      // 主题示例
+      themes: [
+        { name: 'documentation', annotations: [
+          { type: 'marker', x: 50, y: 50, number: 1, color: 'primary', style: 'filled' },
+          { type: 'arrow', from: [80, 80], to: [150, 50], color: 'primary' },
+          { type: 'label', x: 50, y: 120, text: '文档风格', color: 'primary', background: 'white', handwriting: true }
+        ]},
+        { name: 'tutorial', annotations: [
+          { type: 'marker', x: 50, y: 50, number: 1, color: 'green', style: 'filled' },
+          { type: 'arrow', from: [80, 80], to: [150, 50], color: 'green' },
+          { type: 'label', x: 50, y: 120, text: '教程风格', color: 'darkGray', background: 'lightGray', handwriting: true }
+        ]},
+        { name: 'bugReport', annotations: [
+          { type: 'marker', x: 50, y: 50, number: 1, color: 'error', style: 'filled' },
+          { type: 'arrow', from: [80, 80], to: [150, 50], color: 'error' },
+          { type: 'label', x: 50, y: 120, text: 'Bug报告', color: 'error', background: 'white', handwriting: true }
+        ]},
+        { name: 'highlight', annotations: [
+          { type: 'marker', x: 50, y: 50, number: 1, color: 'warning', style: 'filled' },
+          { type: 'arrow', from: [80, 80], to: [150, 50], color: 'warning' },
+          { type: 'label', x: 50, y: 120, text: '高亮风格', color: 'darkGray', background: 'yellow', handwriting: true }
+        ]}
+      ],
+
+      // 标注类型示例
+      annotations: [
+        { title: 'Marker - Filled', type: 'marker', annotations: [
+          { type: 'marker', x: 60, y: 60, number: 1, color: 'red', style: 'filled' },
+          { type: 'marker', x: 120, y: 60, number: 2, color: 'blue', style: 'filled' },
+          { type: 'marker', x: 180, y: 60, number: 3, color: 'green', style: 'filled' }
+        ], params: 'style: filled' },
+
+        { title: 'Marker - Outline', type: 'marker', annotations: [
+          { type: 'marker', x: 60, y: 60, number: 1, color: 'red', style: 'outline' },
+          { type: 'marker', x: 120, y: 60, number: 2, color: 'blue', style: 'outline' },
+          { type: 'marker', x: 180, y: 60, number: 3, color: 'green', style: 'outline' }
+        ], params: 'style: outline' },
+
+        { title: 'Marker - Badge', type: 'marker', annotations: [
+          { type: 'marker', x: 60, y: 60, number: 1, color: 'red', style: 'badge' },
+          { type: 'marker', x: 130, y: 60, number: 10, color: 'blue', style: 'badge' },
+          { type: 'marker', x: 200, y: 60, number: 99, color: 'green', style: 'badge' }
+        ], params: 'style: badge' },
+
+        { title: 'Arrow - Solid', type: 'arrow', annotations: [
+          { type: 'arrow', from: [30, 60], to: [150, 60], color: 'red', style: 'solid', headStyle: 'filled' },
+          { type: 'arrow', from: [30, 100], to: [150, 100], color: 'blue', style: 'solid', headStyle: 'filled' }
+        ], params: 'style: solid' },
+
+        { title: 'Arrow - Dashed', type: 'arrow', annotations: [
+          { type: 'arrow', from: [30, 60], to: [150, 60], color: 'green', style: 'dashed' },
+          { type: 'arrow', from: [30, 100], to: [150, 100], color: 'purple', style: 'dashed' }
+        ], params: 'style: dashed' },
+
+        { title: 'Arrow - Open Head', type: 'arrow', annotations: [
+          { type: 'arrow', from: [30, 60], to: [150, 60], color: 'orange', headStyle: 'open' },
+          { type: 'arrow', from: [30, 100], to: [150, 100], color: 'cyan', headStyle: 'open' }
+        ], params: 'headStyle: open' },
+
+        { title: 'Curved Arrow', type: 'curved-arrow', annotations: [
+          { type: 'curved-arrow', from: [40, 40], to: [160, 120], curve: 40, color: 'red' },
+          { type: 'curved-arrow', from: [40, 120], to: [160, 40], curve: -40, color: 'blue' }
+        ], params: 'curve: ±40' },
+
+        { title: 'Callout - Bottom', type: 'callout', annotations: [
+          { type: 'callout', x: 100, y: 50, text: '下方指针', pointer: 'bottom', color: 'primary' }
+        ], params: 'pointer: bottom' },
+
+        { title: 'Callout - Top', type: 'callout', annotations: [
+          { type: 'callout', x: 100, y: 120, text: '上方指针', pointer: 'top', color: 'green' }
+        ], params: 'pointer: top' },
+
+        { title: 'Callout - Left', type: 'callout', annotations: [
+          { type: 'callout', x: 180, y: 80, text: '左侧', pointer: 'left', color: 'blue' }
+        ], params: 'pointer: left' },
+
+        { title: 'Callout - Right', type: 'callout', annotations: [
+          { type: 'callout', x: 40, y: 80, text: '右侧', pointer: 'right', color: 'purple' }
+        ], params: 'pointer: right' },
+
+        { title: 'Rectangle - Solid', type: 'rect', annotations: [
+          { type: 'rect', x: 30, y: 30, width: 120, height: 80, color: 'red', style: 'solid' }
+        ], params: 'style: solid' },
+
+        { title: 'Rectangle - Dashed', type: 'rect', annotations: [
+          { type: 'rect', x: 30, y: 30, width: 120, height: 80, color: 'blue', style: 'dashed' }
+        ], params: 'style: dashed' },
+
+        { title: 'Rectangle - Filled', type: 'rect', annotations: [
+          { type: 'rect', x: 30, y: 30, width: 120, height: 80, color: 'green', fill: 'green', opacity: 0.3 }
+        ], params: 'fill: green' },
+
+        { title: 'Circle - Solid', type: 'circle', annotations: [
+          { type: 'circle', x: 70, y: 70, radius: 40, color: 'red', style: 'solid' },
+          { type: 'circle', x: 150, y: 70, radius: 40, color: 'blue', style: 'solid' }
+        ], params: 'style: solid' },
+
+        { title: 'Circle - Dashed', type: 'circle', annotations: [
+          { type: 'circle', x: 70, y: 70, radius: 40, color: 'green', style: 'dashed' },
+          { type: 'circle', x: 150, y: 70, radius: 40, color: 'purple', style: 'dashed' }
+        ], params: 'style: dashed' },
+
+        { title: 'Circle - Filled', type: 'circle', annotations: [
+          { type: 'circle', x: 70, y: 70, radius: 40, color: 'orange', fill: 'orange', opacity: 0.4 },
+          { type: 'circle', x: 150, y: 70, radius: 40, color: 'cyan', fill: 'cyan', opacity: 0.4 }
+        ], params: 'fill: color' },
+
+        { title: 'Label - Simple', type: 'label', annotations: [
+          { type: 'label', x: 40, y: 80, text: '纯文字标签', color: 'darkGray', background: null }
+        ], params: 'background: null' },
+
+        { title: 'Label - With Background', type: 'label', annotations: [
+          { type: 'label', x: 40, y: 80, text: '带背景标签', color: 'darkGray', background: 'white' }
+        ], params: 'background: white' },
+
+        { title: 'Label - Colored Background', type: 'label', annotations: [
+          { type: 'label', x: 40, y: 80, text: '彩色背景', color: 'darkGray', background: 'yellow' }
+        ], params: 'background: yellow' },
+
+        { title: 'Highlight', type: 'highlight', annotations: [
+          { type: 'highlight', x: 20, y: 40, width: 180, height: 40, color: 'yellow', opacity: 0.35 },
+          { type: 'highlight', x: 20, y: 90, width: 180, height: 40, color: 'green', opacity: 0.35 }
+        ], params: 'opacity: 0.35' },
+
+        { title: 'Blur', type: 'blur', annotations: [
+          { type: 'blur', x: 30, y: 30, width: 100, height: 60, intensity: 8 }
+        ], params: 'intensity: 8' },
+
+        { title: 'Connector - Dashed', type: 'connector', annotations: [
+          { type: 'connector', from: [30, 50], to: [170, 50], color: 'gray', style: 'dashed' },
+          { type: 'connector', from: [30, 100], to: [170, 100], color: 'gray', style: 'dashed' }
+        ], params: 'style: dashed' },
+
+        { title: 'Icon - Check', type: 'icon', annotations: [
+          { type: 'icon', x: 60, y: 60, icon: 'check', color: 'success', size: 28 },
+          { type: 'icon', x: 140, y: 60, icon: 'x', color: 'error', size: 28 }
+        ], params: 'icon: check/x' },
+
+        { title: 'Icon - Warning/Info', type: 'icon', annotations: [
+          { type: 'icon', x: 60, y: 60, icon: 'warning', color: 'warning', size: 28 },
+          { type: 'icon', x: 140, y: 60, icon: 'info', color: 'info', size: 28 }
+        ], params: 'icon: warning/info' },
+
+        { title: 'Icon - Question', type: 'icon', annotations: [
+          { type: 'icon', x: 100, y: 60, icon: 'question', color: 'purple', size: 28 }
+        ], params: 'icon: question' }
+      ]
+    };
+
+    // ============================================
+    // 渲染页面
+    // ============================================
+
+    function renderColors() {
+      const grid = document.getElementById('color-grid');
+      grid.innerHTML = EXAMPLES.colors.map(([name, hex]) => `
+        <div class="color-item">
+          <div class="color-swatch" style="background: ${hex}"></div>
+          <span class="color-name">${name}</span>
+        </div>
+      `).join('');
+    }
+
+    function renderThemes() {
+      const grid = document.getElementById('theme-grid');
+      grid.innerHTML = EXAMPLES.themes.map(theme => {
+        const svg = buildSvg(200, 150, theme.annotations);
+        return `
+          <div class="theme-card">
+            <h3>${theme.name}</h3>
+            <div class="theme-preview">
+              <img src="${svgToDataUrl(svg)}" alt="${theme.name}">
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderAnnotations() {
+      const grid = document.getElementById('annotation-grid');
+      grid.innerHTML = EXAMPLES.annotations.map(item => {
+        const svg = buildSvg(220, 140, item.annotations);
+        return `
+          <div class="annotation-card">
+            <h3>
+              ${item.title}
+              <span class="type-badge">${item.type}</span>
+            </h3>
+            <div class="annotation-preview">
+              <img src="${svgToDataUrl(svg)}" alt="${item.title}">
+            </div>
+            <div class="annotation-info">
+              <code>${item.params}</code>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // 初始化
+    renderColors();
+    renderThemes();
+    renderAnnotations();
+  </script>
+</body>
+</html>

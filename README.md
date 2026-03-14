@@ -13,27 +13,53 @@ Professional MCP server for annotating screenshots with markers, arrows, callout
 
 ## Installation
 
-### For Claude Desktop
+### Option 1: Using npx (Recommended)
 
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "image-annotator": {
+      "command": "npx",
+      "args": ["-y", "image-annotator-mcp"]
+    }
+  }
+}
+```
+
+### Option 2: Global Install
+
+```bash
+npm install -g image-annotator-mcp
+```
+
+```json
+{
+  "mcpServers": {
+    "image-annotator": {
+      "command": "image-annotator"
+    }
+  }
+}
+```
+
+### Option 3: Local Development
+
+```bash
+cd image-annotator
+npm install
+```
 
 ```json
 {
   "mcpServers": {
     "image-annotator": {
       "command": "node",
-      "args": ["/path/to/.mcp-servers/image-annotator/server.js"]
+      "args": ["${process.cwd()}/server.js"]
     }
   }
 }
-```
 
-### Dependencies
-
-```bash
-cd image-annotator
-npm install
-```
+> Note: For Windows, use forward slashes in path or use environment variable `%CD%` in args.
 
 ## MCP Tools
 

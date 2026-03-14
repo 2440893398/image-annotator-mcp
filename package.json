@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node server.js",
     "cli": "node annotate.js",
-    "test": "node annotate.js --help"
+    "test": "jest",
+    "test:watch": "jest --watch"
   },
   "keywords": [
     "mcp",
@@ -39,8 +40,18 @@
   "engines": {
     "node": ">=18.0.0"
   },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.1",
+    "get-east-asian-width": "^1.5.0",
+    "minimist": "^1.2.8",
     "sharp": "^0.34.5"
+  },
+  "devDependencies": {
+    "jest": "^30.3.0"
   }
 }

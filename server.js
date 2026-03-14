@@ -20,6 +20,15 @@ const {
 const path = require('path');
 const fs = require('fs');
 
+const {
+  AnnotationError,
+  FileNotFoundError,
+  InvalidParameterError,
+  ImageProcessingError,
+  AnnotationTypeError
+} = require('./annotate-errors');
+const fs = require('fs');
+
 // Import annotation functions
 const { annotateImage, getImageDimensions, COLORS, THEMES } = require('./annotate.js');
 
@@ -267,9 +276,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error(`Unknown tool: ${name}`);
     }
   } catch (error) {
+    let errorCode = 'UNKNOWN_ERROR';
+    let errorMessage = error.message;
+
+    if (error instanceof FileNotFoundError) {
+      errorCode = error.code;
+      errorMessage = `File not found: ${error.filePath}`;
+    } else if (error instanceof InvalidParameterError) {
+      errorCode = error.code;
+      errorMessage = `Invalid parameter: ${error.param} - ${error.message}`;
+    } else if (error instanceof ImageProcessingError) {
+      errorCode = error.code;
+      errorMessage = `Image processing failed: ${error.message}`;
+    } else if (error instanceof AnnotationTypeError) {
+      errorCode = error.code;
+      errorMessage = `Annotation error: ${error.message}`;
+    } else if (error instanceof AnnotationError) {
+      errorCode = error.code;
+    }
+
     return {
-      content: [{ type: 'text', text: `Error: ${error.message}` }],
+      content: [{ type: 'text', text: `Error (${errorCode}): ${errorMessage}` }],
       isError: true,
+      errorCode
     };
   }
 });
