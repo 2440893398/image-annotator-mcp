@@ -24,7 +24,7 @@ image-annotator-mcp/
 
 ### `server.js`
 - MCP server implementation
-- Exposes 6 tools via stdio transport
+- Exposes 7 tools via stdio transport (including `open_config_ui`)
 - Handles request validation and response formatting
 
 ### `annotate.js`
@@ -42,6 +42,7 @@ image-annotator-mcp/
 | `highlight_area` | Quickly highlight a specific area |
 | `add_callout` | Add speech bubble callouts |
 | `blur_area` | Blur rectangular areas |
+| `open_config_ui` | Open the annotation config UI in the browser. **Call with no arguments** to open; optionally pass `working_directory` (absolute path of the project/workspace where config should be saved) so `.image-annotator.json` is written there and used by `annotate_screenshot` for that project. |
 
 ## Running the Project
 
@@ -94,6 +95,10 @@ red, orange, yellow, green, blue, purple, pink, cyan, teal, white, black, gray, 
 ### Themes
 documentation, tutorial, bugReport, highlight
 
+## Quick Reference for Agents
+
+- **Open config UI**: Call `open_config_ui` with no arguments to open the browser config UI. To save config into the user's project, call `open_config_ui` with `working_directory` set to the workspace root (e.g. the project path where the user is working). No need to look up MCP server names or tool schemas elsewhere; the tool is on this server.
+
 ## Common Tasks
 
 ### Adding a New Annotation Type
@@ -123,3 +128,14 @@ Coordinates are in image pixels. When using with Playwright:
 1. Get bounding boxes via `browser_evaluate` with `getBoundingClientRect()`
 2. Multiply coordinates by 2 for Retina/2x screenshots
 3. Use `get_image_dimensions` to validate coordinates don't exceed image bounds
+
+## 文档检索（weknora MCP）
+
+使用 weknora MCP 检索项目文档：
+
+- **知识库 ID**: `f6dd9088-2e05-4dcb-b53e-7eb43d3dda4c`
+- **检索**: `hybrid_search` 工具
+- **新增文档**: `create_knowledge_from_url` 工具
+- **映射文件**: `scripts/weknora-sync-map.json`
+
+自动同步：Git commit 后自动将修改的 `.md` 文件同步到知识库（删除旧记录 → 重新添加）。

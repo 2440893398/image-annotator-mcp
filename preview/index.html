@@ -277,9 +277,12 @@
       return CJK_REGEX.test(text) ? 1.0 : TEXT_WIDTH_RATIO;
     }
     let idCounter = 0;
+    /** Set by buildSvg so each card's inline SVG gets unique IDs (avoids cross-card ID clashes). */
+    let buildNamespace = '';
 
     function generateId(prefix = 'ann') {
-      return `${prefix}-${Date.now()}-${idCounter++}`;
+      const ns = buildNamespace ? buildNamespace + '-' : '';
+      return `${ns}${prefix}-${Date.now()}-${idCounter++}`;
     }
 
     function escapeXml(text) {
@@ -301,7 +304,8 @@
     }
 
     function createDropShadow(id, blur = 4, opacity = 0.3) {
-      return `<filter id="${id}" x="-50%" y="-50%" width="200%" height="200%">
+      // userSpaceOnUse + large region so filter works on <line> (line's objectBoundingBox can collapse and clip)
+      return `<filter id="${id}" filterUnits="userSpaceOnUse" x="-50" y="-50" width="400" height="300">
         <feDropShadow dx="2" dy="2" stdDeviation="${blur}" flood-opacity="${opacity}"/></filter>`;
     }
 
@@ -566,8 +570,9 @@
       return { defs: defs.join('\n'), element: `<g ${filterAttr}><circle cx="${x}" cy="${y}" r="${size}" fill="${c}"/>${iconPath}</g>` };
     }
 
-    function buildSvg(width, height, annotations) {
+    function buildSvg(width, height, annotations, namespace = '') {
       idCounter = 0;
+      buildNamespace = namespace || '';
       const defs = [], elements = [];
 
       for (const ann of annotations) {
@@ -592,10 +597,17 @@
         }
       }
 
+      buildNamespace = '';
+      // 留边距避免 drop shadow 和靠边的 callout 被裁切
+      const pad = 20;
+      const vx = -pad;
+      const vy = -pad;
+      const vw = width + pad * 2;
+      const vh = height + pad * 2;
       return `<?xml version="1.0" encoding="UTF-8"?>
-<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+<svg width="${width}" height="${height}" viewBox="${vx} ${vy} ${vw} ${vh}" xmlns="http://www.w3.org/2000/svg">
   <defs>${defs.join('\n')}</defs>
-  ${elements.join('\n')}
+  <g transform="translate(${pad}, ${pad})">${elements.join('\n')}</g>
 </svg>`;
     }
 
@@ -680,11 +692,11 @@
         ], params: 'pointer: bottom' },
 
         { title: 'Callout - Top', type: 'callout', annotations: [
-          { type: 'callout', x: 100, y: 120, text: '上方指针', pointer: 'top', color: 'green' }
+          { type: 'callout', x: 100, y: 60, text: '上方指针', pointer: 'top', color: 'green' }
         ], params: 'pointer: top' },
 
         { title: 'Callout - Left', type: 'callout', annotations: [
-          { type: 'callout', x: 180, y: 80, text: '左侧', pointer: 'left', color: 'blue' }
+          { type: 'callout', x: 120, y: 70, text: '左侧', pointer: 'left', color: 'blue' }
         ], params: 'pointer: left' },
 
         { title: 'Callout - Right', type: 'callout', annotations: [
@@ -789,10 +801,18 @@
       }).join('');
     }
 
+    // Track unique ID suffix per annotation card to avoid ID collisions between inline SVGs
+    let annotationCardId = 0;
+
     function renderAnnotations() {
       const grid = document.getElementById('annotation-grid');
       grid.innerHTML = EXAMPLES.annotations.map(item => {
-        const svg = buildSvg(220, 140, item.annotations);
+        // Each card gets a unique namespace suffix to avoid ID collisions between inline SVGs
+        const cardNamespace = `card-${annotationCardId++}`;
+        const svg = buildSvg(220, 140, item.annotations, cardNamespace);
+
+        // Inline SVG so marker-end and filters resolve reliably (data URL img can fail for arrow-only SVGs)
+        const svgInline = svg.replace(/<\?xml[^?]*\?>\s*/i, '').trim();
         return `
           <div class="annotation-card">
             <h3>
@@ -800,7 +820,7 @@
               <span class="type-badge">${item.type}</span>
             </h3>
             <div class="annotation-preview">
-              <img src="${svgToDataUrl(svg)}" alt="${item.title}">
+              ${svgInline}
             </div>
             <div class="annotation-info">
               <code>${item.params}</code>

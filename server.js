@@ -25,9 +25,9 @@ const {
   FileNotFoundError,
   InvalidParameterError,
   ImageProcessingError,
-  AnnotationTypeError
+  AnnotationTypeError,
+  ValidationError
 } = require('./annotate-errors');
-const fs = require('fs');
 
 // Import annotation functions
 const { annotateImage, getImageDimensions, COLORS, THEMES } = require('./annotate.js');
@@ -235,6 +235,28 @@ Perfect for tutorials and documentation.`,
       },
       required: ['input_path', 'x', 'y', 'width', 'height']
     }
+  },
+  {
+    name: 'open_config_ui',
+    description: `Open the annotation config UI in the browser. Call with no arguments to open immediately.
+
+- Optional working_directory (string): Absolute path where .image-annotator.json should be saved (e.g. the user's project/workspace root). If omitted, config is saved in the MCP server's directory.
+- Optional port (number): Port for the config server (default: 3456).
+
+After the user saves in the UI, subsequent annotate_screenshot calls will use that config when the image path is under the same directory (or when config is found via parent/home lookup).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        working_directory: {
+          type: 'string',
+          description: 'Absolute path of the directory where config should be saved (e.g. workspace root). If provided, .image-annotator.json will be written here so annotate_screenshot uses it for that project.'
+        },
+        port: {
+          type: 'number',
+          description: 'Port for the config server (default: 3456)'
+        }
+      }
+    }
   }
 ];
 
@@ -272,6 +294,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleCallout(args);
       case 'blur_area':
         return await handleBlur(args);
+      case 'open_config_ui':
+        return await handleOpenConfigUi(args);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -291,6 +315,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     } else if (error instanceof AnnotationTypeError) {
       errorCode = error.code;
       errorMessage = `Annotation error: ${error.message}`;
+    } else if (error instanceof ValidationError) {
+      errorCode = error.code;
+      errorMessage = `Validation failed: ${error.message}`;
     } else if (error instanceof AnnotationError) {
       errorCode = error.code;
     }
@@ -316,7 +343,7 @@ async function handleAnnotate(args) {
   const { input_path, output_path, annotations, theme } = args;
 
   if (!fs.existsSync(input_path)) {
-    throw new Error(`File not found: ${input_path}`);
+    throw new FileNotFoundError(input_path);
   }
 
   const finalPath = output_path || getOutputPath(input_path);
@@ -334,7 +361,7 @@ async function handleDimensions(args) {
   const { image_path } = args;
 
   if (!fs.existsSync(image_path)) {
-    throw new Error(`File not found: ${image_path}`);
+    throw new FileNotFoundError(image_path);
   }
 
   const dims = await getImageDimensions(image_path);
@@ -351,7 +378,7 @@ async function handleStepGuide(args) {
   const { input_path, output_path, steps, connect_steps = true, theme } = args;
 
   if (!fs.existsSync(input_path)) {
-    throw new Error(`File not found: ${input_path}`);
+    throw new FileNotFoundError(input_path);
   }
 
   const colors = ['primary', 'green', 'orange', 'purple', 'cyan'];
@@ -421,7 +448,7 @@ async function handleHighlight(args) {
   const { input_path, output_path, shape, x, y, width, height, color = 'red', label, label_position = 'right' } = args;
 
   if (!fs.existsSync(input_path)) {
-    throw new Error(`File not found: ${input_path}`);
+    throw new FileNotFoundError(input_path);
   }
 
   const annotations = [];
@@ -492,7 +519,7 @@ async function handleCallout(args) {
   const { input_path, output_path, x, y, text, pointer = 'left', color = 'primary', background = 'white' } = args;
 
   if (!fs.existsSync(input_path)) {
-    throw new Error(`File not found: ${input_path}`);
+    throw new FileNotFoundError(input_path);
   }
 
   const annotations = [{
@@ -520,7 +547,7 @@ async function handleBlur(args) {
   const { input_path, output_path, x, y, width, height, intensity = 8 } = args;
 
   if (!fs.existsSync(input_path)) {
-    throw new Error(`File not found: ${input_path}`);
+    throw new FileNotFoundError(input_path);
   }
 
   const annotations = [{
@@ -537,6 +564,102 @@ async function handleBlur(args) {
       text: `✓ Area blurred: ${finalPath}`
     }]
   };
+}
+
+// Track config server child process for cleanup
+let configServerProcess = null;
+
+/**
+ * Open URL in the default browser (cross-platform)
+ */
+function openBrowser(url) {
+  const { spawn } = require('child_process');
+  try {
+    const platform = process.platform;
+    if (platform === 'win32') {
+      spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' });
+    } else if (platform === 'darwin') {
+      spawn('open', [url], { detached: true, stdio: 'ignore' });
+    } else {
+      spawn('xdg-open', [url], { detached: true, stdio: 'ignore' });
+    }
+  } catch (e) {
+    // Ignore browser open errors
+  }
+}
+
+// Start config UI server (optional workingDir = where to save .image-annotator.json)
+function startConfigServer(workingDir) {
+  const { spawn } = require('child_process');
+  
+  // Kill previous config server if still running
+  if (configServerProcess) {
+    try { configServerProcess.kill(); } catch (e) { /* ignore */ }
+    configServerProcess = null;
+  }
+  
+  const cwd = workingDir && path.isAbsolute(workingDir) ? workingDir : process.cwd();
+  const configServer = spawn('node', [path.join(__dirname, 'config-ui', 'server.js')], {
+    cwd,
+    stdio: 'pipe'
+  });
+  configServerProcess = configServer;
+  
+  return new Promise((resolve, reject) => {
+    let resolved = false;
+    
+    configServer.stdout.on('data', (data) => {
+      const output = data.toString();
+      const urlMatch = output.match(/http:\/\/localhost:(\d+)/);
+      if (urlMatch && !resolved) {
+        resolved = true;
+        const url = urlMatch[0];
+        openBrowser(url);
+        resolve(url);
+      }
+    });
+    
+    configServer.stderr.on('data', (data) => {
+      console.error('Config server error:', data.toString());
+    });
+    
+    configServer.on('exit', () => {
+      configServerProcess = null;
+    });
+    
+    // Fallback after 3 seconds
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        resolve('http://localhost:3456');
+      }
+    }, 3000);
+  });
+}
+
+// Clean up config server on process exit
+process.on('exit', () => {
+  if (configServerProcess) {
+    try { configServerProcess.kill(); } catch (e) { /* ignore */ }
+  }
+});
+
+async function handleOpenConfigUi(args) {
+  try {
+    const workingDir = args.working_directory || undefined;
+    const url = await startConfigServer(workingDir);
+    const saveHint = workingDir
+      ? `Config will be saved to: ${path.join(workingDir, '.image-annotator.json')}`
+      : 'Config will be saved to .image-annotator.json in the MCP server directory (pass working_directory to save to your project instead).';
+    return {
+      content: [{
+        type: 'text',
+        text: `Configuration UI opened.\n\nURL: ${url}\n\n${saveHint}\n\nSubsequent annotate_screenshot calls will use this config when the image is under that directory.`
+      }]
+    };
+  } catch (error) {
+    throw new Error(`Failed to start config UI: ${error.message}`);
+  }
 }
 
 // Start server

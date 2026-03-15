@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image Annotator 配置器</title>
+  <link rel="stylesheet" href="styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Nunito:wght@400;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Image Annotator 配置器</h1>
+      <button id="exportBtn" class="btn-primary">保存并应用</button>
+    </header>
+    
+    <main>
+      <!-- Size Preset Section -->
+      <section class="section">
+        <h2>尺寸预设</h2>
+        <div class="size-presets">
+          <button class="preset-btn" data-size="xs">xs</button>
+          <button class="preset-btn" data-size="s">s</button>
+          <button class="preset-btn active" data-size="m">m</button>
+          <button class="preset-btn" data-size="l">l</button>
+          <button class="preset-btn" data-size="xl">xl</button>
+        </div>
+        <div class="size-hint">
+          <span class="hint-label">建议:</span>
+          <span id="suggestedSize">m (800-1200px)</span>
+        </div>
+        <label class="checkbox-label">
+          <input type="checkbox" id="autoSize" checked>
+          自动根据图片尺寸选择
+        </label>
+      </section>
+      
+      <!-- Theme Selection -->
+      <section class="section">
+        <h2>主题</h2>
+        <div class="theme-grid">
+          <button class="theme-btn active" data-theme="documentation">
+            <span class="theme-color" style="background: #1976D2"></span>
+            <span class="theme-name">文档</span>
+            <span class="theme-font">Inter</span>
+          </button>
+          <button class="theme-btn" data-theme="tutorial">
+            <span class="theme-color" style="background: #43A047"></span>
+            <span class="theme-name">教程</span>
+            <span class="theme-font">Nunito</span>
+          </button>
+          <button class="theme-btn" data-theme="bugReport">
+            <span class="theme-color" style="background: #F44336"></span>
+            <span class="theme-name">Bug报告</span>
+            <span class="theme-font">JetBrains Mono</span>
+          </button>
+          <button class="theme-btn" data-theme="highlight">
+            <span class="theme-color" style="background: #FF9800"></span>
+            <span class="theme-name">高亮</span>
+            <span class="theme-font">Noto Sans</span>
+          </button>
+        </div>
+      </section>
+      
+      <!-- Theme Customization -->
+      <section class="section">
+        <h2>微调主题</h2>
+        <div id="themeEditor" class="theme-editor">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Marker 颜色</label>
+              <select id="markerColor">
+                <option value="primary">Primary (蓝)</option>
+                <option value="error">Error (红)</option>
+                <option value="success">Success (绿)</option>
+                <option value="warning">Warning (橙)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Marker 大小</label>
+              <input type="number" id="markerSize" value="32" min="16" max="64">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Arrow 线宽</label>
+              <input type="number" id="arrowWidth" value="5" min="2" max="12">
+            </div>
+            <div class="form-group">
+              <label>Label 字体大小</label>
+              <input type="number" id="labelFontSize" value="20" min="10" max="36">
+            </div>
+          </div>
+          <button id="resetTheme" class="btn-secondary">重置为默认值</button>
+        </div>
+      </section>
+      
+      <!-- Live Preview -->
+      <section class="section">
+        <h2>实时预览</h2>
+        <div id="preview" class="preview-area">
+          <div class="preview-canvas">
+            <div class="preview-marker">1</div>
+            <div class="preview-arrow"></div>
+            <div class="preview-label">标注文字</div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  
+  <!-- Shared renderer from project preview/ (served by config-ui server) -->
+  <script src="/preview/renderer.js"></script>
+  <script src="preview.js"></script>
+</body>
+</html>

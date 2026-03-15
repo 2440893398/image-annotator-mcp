@@ -98,6 +98,63 @@ Add a callout (speech bubble) pointing to a specific location.
 ### `blur_area`
 Blur a rectangular area to hide sensitive information.
 
+### `open_config_ui`
+Open browser-based configuration UI to customize annotation presets. The config file will be saved to the current working directory.
+
+## Size Presets
+
+The tool automatically adjusts annotation sizes based on image width:
+
+| Preset | Image Width | Marker Size | Stroke Width | Font Size |
+|--------|-------------|-------------|--------------|------------|
+| xs     | < 400px    | 20px        | 3px          | 12px       |
+| s      | 400-800px  | 24px        | 4px          | 14px       |
+| m      | 800-1200px | 32px        | 5px          | 18px       |
+| l      | 1200-1920px| 40px        | 6px          | 22px       |
+| xl     | > 1920px   | 48px        | 8px          | 28px       |
+
+By default, the appropriate preset is automatically selected based on image width. You can also manually specify a preset in the config file.
+
+## Configuration File
+
+Create a `.image-annotator.json` file in your project directory to customize default settings:
+
+```json
+{
+  "version": "1.0",
+  "sizePreset": "auto",
+  "theme": "documentation"
+}
+```
+
+**Config Discovery:** The tool searches for config in this order:
+1. Current working directory
+2. Parent directories (up to 3 levels)
+3. User home directory
+4. Default values
+
+## Configuration UI
+
+Use the `open_config_ui` tool to open a visual configuration interface in your browser:
+
+- Select size presets
+- Choose themes with professional fonts
+- Customize colors and sizes
+- Live preview
+
+The config file will be saved to your current working directory.
+
+## Professional Fonts
+
+Each theme comes with a professionally matched font:
+
+| Theme       | Font Family                    | Use Case            |
+|-------------|--------------------------------|---------------------|
+| documentation| Inter                        | Technical docs      |
+| tutorial   | Nunito                         | Tutorials           |
+| bugReport  | JetBrains Mono                 | Bug reports         |
+| highlight  | Noto Sans                      | Multi-language      |
+
 ## Usage Example
 
 ```json

@@ -11,14 +11,22 @@
 const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs');
+const { loadConfig, saveConfig } = require('./config-loader');
 
 const {
-  AnnotationError,
   FileNotFoundError,
   InvalidParameterError,
   ImageProcessingError,
-  AnnotationTypeError
+  ValidationError
 } = require('./annotate-errors');
+
+// Professional font stacks (replacing Comic Sans)
+const THEME_FONTS = {
+  documentation: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
+  tutorial: 'Nunito, Quicksand, sans-serif',
+  bugReport: 'JetBrains Mono, Fira Code, monospace',
+  highlight: 'Noto Sans, Noto Sans CJK SC, sans-serif'
+};
 
 // Handwriting-style font stack (more reliable cross-platform)
 const HANDWRITING_FONT = "Comic Sans MS, Chalkboard SE, Patrick Hand, cursive";
@@ -63,28 +71,48 @@ const THEMES = {
   documentation: {
     marker: { color: 'primary', size: 32 },
     arrow: { color: 'primary', strokeWidth: 5 },
-    label: { color: 'primary', fontSize: 20, background: 'white', handwriting: true },
-    callout: { color: 'primary', background: 'white' }
+    label: { color: 'primary', fontSize: 20, background: 'white', font: 'Inter' },
+    callout: { color: 'primary', background: 'white', font: 'Inter' }
   },
   tutorial: {
     marker: { color: 'green', size: 36 },
     arrow: { color: 'green', strokeWidth: 6 },
-    label: { color: 'darkGray', fontSize: 22, background: 'lightGray', handwriting: true },
-    callout: { color: 'green', background: 'white' }
+    label: { color: 'darkGray', fontSize: 22, background: 'lightGray', font: 'Nunito' },
+    callout: { color: 'green', background: 'white', font: 'Nunito' }
   },
   bugReport: {
     marker: { color: 'error', size: 32 },
     arrow: { color: 'error', strokeWidth: 5 },
-    label: { color: 'error', fontSize: 20, background: 'white', handwriting: true },
-    callout: { color: 'error', background: 'white' }
+    label: { color: 'error', fontSize: 20, background: 'white', font: 'JetBrains Mono' },
+    callout: { color: 'error', background: 'white', font: 'JetBrains Mono' }
   },
   highlight: {
     marker: { color: 'warning', size: 32 },
     arrow: { color: 'warning', strokeWidth: 5 },
-    label: { color: 'darkGray', fontSize: 20, background: 'yellow', handwriting: true },
-    callout: { color: 'warning', background: 'yellow' }
+    label: { color: 'darkGray', fontSize: 20, background: 'yellow', font: 'Noto Sans' },
+    callout: { color: 'warning', background: 'yellow', font: 'Noto Sans' }
   }
 };
+
+// Size presets based on image width
+const SIZE_PRESETS = {
+  xs: { markerSize: 20, strokeWidth: 3, fontSize: 12 },   // < 400px
+  s:  { markerSize: 24, strokeWidth: 4, fontSize: 14 },   // 400-800px
+  m:  { markerSize: 32, strokeWidth: 5, fontSize: 18 },   // 800-1200px (default)
+  l:  { markerSize: 40, strokeWidth: 6, fontSize: 22 },   // 1200-1920px
+  xl: { markerSize: 48, strokeWidth: 8, fontSize: 28 }    // > 1920px
+};
+
+/**
+ * Get size preset based on image width
+ */
+function getSizePreset(imageWidth) {
+  if (imageWidth < 400) return 'xs';
+  if (imageWidth < 800) return 's';
+  if (imageWidth < 1200) return 'm';
+  if (imageWidth < 1920) return 'l';
+  return 'xl';
+}
 
 // Text width estimation coefficient (average character width / font size ratio) for narrow-only text
 const TEXT_WIDTH_RATIO = 0.65;
@@ -239,7 +267,7 @@ function createMarker({ x, y, number, color = 'red', size = 32, shadow = true, s
   } else if (style === 'badge') {
     // Badge style (pill shape for multi-digit)
     const isMultiDigit = number > 9;
-    const width = isMultiDigit ? size * 1.6 : size * 2;
+    const width = isMultiDigit ? size * 2.4 : size * 2;
     const height = size * 2;
     elements.push(`
       <rect x="${x - width / 2}" y="${y - height / 2}" width="${width}" height="${height}"
@@ -347,12 +375,23 @@ function createCurvedArrow({ from, to, curve = 50, color = 'red', strokeWidth = 
 /**
  * Create professional callout box with pointer (rounded corners, handwriting font)
  */
-function createCallout({ x, y, text, color = 'primary', background = 'white', width = null, pointer = 'bottom', fontSize = 18, shadow = true, handwriting = true }) {
+function createCallout({ x, y, text, color = 'primary', background = 'white', width = null, pointer = 'bottom', fontSize = 18, shadow = true, handwriting = null, font = null }) {
   const borderColor = getColor(color);
   const bgColor = getColor(background);
   const id = generateId('callout');
   const defs = [];
-  const fontFamily = handwriting ? HANDWRITING_FONT : CLEAN_FONT;
+  
+  // Determine font family: explicit font > theme font > handwriting flag > default
+  let fontFamily;
+  if (font) {
+    fontFamily = font;
+  } else if (handwriting === true) {
+    fontFamily = HANDWRITING_FONT;
+  } else if (handwriting === false) {
+    fontFamily = CLEAN_FONT;
+  } else {
+    fontFamily = CLEAN_FONT;  // default to clean font
+  }
 
   // Calculate dimensions using UAX #11 East Asian Width (per-char) for mixed Latin+CJK
   const padding = 14;
@@ -473,12 +512,23 @@ function createCircle({ x, y, radius = 30, color = 'red', strokeWidth = 4, fill 
  * Create text label with optional background (handwriting font support).
  * Supports multi-line via \n; box width adapts to content (CJK-safe ratio).
  */
-function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight = '600', background = null, padding = 10, cornerRadius = 8, shadow = true, handwriting = true }) {
+function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight = '600', background = null, padding = 10, cornerRadius = 8, shadow = true, handwriting = null, font = null }) {
   const textColor = getColor(color);
   const id = generateId('label');
   const defs = [];
   const elements = [];
-  const fontFamily = handwriting ? HANDWRITING_FONT : CLEAN_FONT;
+  
+  // Determine font family: explicit font > theme font > handwriting flag > default
+  let fontFamily;
+  if (font) {
+    fontFamily = font;
+  } else if (handwriting === true) {
+    fontFamily = HANDWRITING_FONT;
+  } else if (handwriting === false) {
+    fontFamily = CLEAN_FONT;
+  } else {
+    fontFamily = CLEAN_FONT;  // default to clean font
+  }
 
   const lines = text.split('\n');
   const lineHeight = fontSize * 1.3;
@@ -633,26 +683,41 @@ function adjustColor(hex, amount) {
 /**
  * Build complete SVG from annotations
  */
-function buildSvg(width, height, annotations, theme = null) {
+function buildSvg(width, height, annotations, options = {}) {
+  // Handle backward compatibility: options can be a string (theme name)
+  if (typeof options === 'string') {
+    options = { theme: options };
+  }
+  
+  const { theme = null, defaultSizes = {}, customThemes = null } = options;
+  
   // Validate annotations array
   if (!Array.isArray(annotations)) {
     throw new InvalidParameterError('Annotations must be an array', 'annotations');
   }
 
-  // Reset ID counter for each build
-  idCounter = 0;
-
   const defs = [];
   const elements = [];
 
-  // Apply theme defaults if specified
-  const themeDefaults = theme ? THEMES[theme] : null;
+  // Apply theme defaults if specified (custom themes take precedence)
+  const themeDefaults = customThemes?.[theme] || (theme ? THEMES[theme] : null);
 
   for (const ann of annotations) {
-    // Merge with theme defaults
-    const mergedAnn = themeDefaults && themeDefaults[ann.type]
+    // Merge with theme defaults first
+    let mergedAnn = themeDefaults && themeDefaults[ann.type]
       ? { ...themeDefaults[ann.type], ...ann }
       : ann;
+    
+    // Then apply size preset defaults (only if not explicitly set)
+    if (defaultSizes.markerSize && !mergedAnn.size && (mergedAnn.type === 'marker' || mergedAnn.type === 'number')) {
+      mergedAnn = { ...mergedAnn, size: defaultSizes.markerSize };
+    }
+    if (defaultSizes.strokeWidth && !mergedAnn.strokeWidth && (mergedAnn.type === 'arrow' || mergedAnn.type === 'curved-arrow' || mergedAnn.type === 'connector')) {
+      mergedAnn = { ...mergedAnn, strokeWidth: defaultSizes.strokeWidth };
+    }
+    if (defaultSizes.fontSize && !mergedAnn.fontSize && (mergedAnn.type === 'label' || mergedAnn.type === 'callout')) {
+      mergedAnn = { ...mergedAnn, fontSize: defaultSizes.fontSize };
+    }
 
     let result;
 
@@ -735,23 +800,53 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
   // Check image size
   checkImageSize(metadata);
 
+  // Load config if not provided
+  // Try to load config from the input file's directory first, then fall back to cwd
+  const inputDir = path.dirname(inputPath);
+  const config = options.config || loadConfig(inputDir) || loadConfig();
+  
+  // Get size preset based on image width
+  let sizePreset = config.sizePreset;
+  if (sizePreset === 'auto' || !sizePreset) {
+    sizePreset = getSizePreset(width);
+  }
+  
+  const baseSizes = SIZE_PRESETS[sizePreset] || SIZE_PRESETS.m;
+  const sizes = config.defaultSizes && typeof config.defaultSizes === 'object'
+    ? { ...baseSizes, ...config.defaultSizes }
+    : baseSizes;
+
+  // Apply config to options
+  const enhancedOptions = {
+    ...options,
+    defaultSizes: sizes,
+    theme: options.theme || config.theme,
+    customThemes: config.themes
+  };
+
   // Build SVG overlay
-  const svg = buildSvg(width, height, annotations, options.theme);
+  const svg = buildSvg(width, height, annotations, enhancedOptions);
 
   // Composite SVG onto image
-  await sharp(inputPath)
-    .composite([{
-      input: Buffer.from(svg),
-      top: 0,
-      left: 0
-    }])
-    .toFile(outputPath);
+  try {
+    await sharp(inputPath)
+      .composite([{
+        input: Buffer.from(svg),
+        top: 0,
+        left: 0
+      }])
+      .toFile(outputPath);
+  } catch (err) {
+    throw new ImageProcessingError(`Failed to composite annotations: ${err.message}`, err);
+  }
 
   return {
     outputPath,
     width,
     height,
-    annotationCount: annotations.length
+    annotationCount: annotations.length,
+    sizePreset,
+    theme: enhancedOptions.theme
   };
 }
 
@@ -854,10 +949,14 @@ module.exports = {
   getImageDimensions,
   COLORS,
   THEMES,
+  THEME_FONTS,
+  SIZE_PRESETS,
+  getSizePreset,
   // Validation functions
   validateAnnotation,
   validateAnnotations,
-  validateImagePath
+  validateImagePath,
+  ValidationError
 };
 
 // Validation functions
@@ -868,9 +967,14 @@ function validateAnnotation(ann) {
   if (typeof ann.type !== 'string') {
     throw new ValidationError('Annotation must have a type');
   }
-  if (ann.type === 'marker' || ann.type === 'arrow') {
+  if (ann.type === 'marker') {
     if (typeof ann.x !== 'number' || typeof ann.y !== 'number') {
-      throw new ValidationError('Marker/arrow annotations require x and y coordinates');
+      throw new ValidationError('Marker annotations require x and y coordinates');
+    }
+  }
+  if (ann.type === 'arrow' || ann.type === 'curved-arrow' || ann.type === 'connector') {
+    if (!Array.isArray(ann.from) || !Array.isArray(ann.to)) {
+      throw new ValidationError(`${ann.type} annotations require from and to coordinate arrays`);
     }
   }
   return true;

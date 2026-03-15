@@ -43,10 +43,18 @@ class AnnotationTypeError extends AnnotationError {
   }
 }
 
+class ValidationError extends AnnotationError {
+  constructor(message) {
+    super(message, 'VALIDATION_ERROR');
+    this.name = 'ValidationError';
+  }
+}
+
 module.exports = {
   AnnotationError,
   FileNotFoundError,
   InvalidParameterError,
   ImageProcessingError,
-  AnnotationTypeError
+  AnnotationTypeError,
+  ValidationError
 };

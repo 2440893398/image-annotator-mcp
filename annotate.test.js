@@ -7,8 +7,7 @@ const {
   validateAnnotation,
   validateAnnotations,
   validateImagePath,
-  ValidationError,
-  FileNotFoundError
+  ValidationError
 } = require('./annotate');
 
 describe('annotate.js', () => {
@@ -43,6 +42,46 @@ describe('annotate.js', () => {
       const svg = buildSvg(100, 100, []);
       expect(svg).toContain('xmlns="http://www.w3.org/2000/svg"');
     });
+
+    it('should render a marker annotation', () => {
+      const svg = buildSvg(200, 200, [{ type: 'marker', x: 50, y: 50, number: 1 }]);
+      expect(svg).toContain('<circle');
+      expect(svg).toContain('>1</text>');
+    });
+
+    it('should render an arrow annotation', () => {
+      const svg = buildSvg(200, 200, [{ type: 'arrow', from: [10, 10], to: [100, 100] }]);
+      expect(svg).toContain('<line');
+      expect(svg).toContain('marker-end');
+    });
+
+    it('should render a label annotation', () => {
+      const svg = buildSvg(200, 200, [{ type: 'label', x: 10, y: 20, text: 'Test Label' }]);
+      expect(svg).toContain('Test Label');
+    });
+
+    it('should render a callout annotation', () => {
+      const svg = buildSvg(200, 200, [{ type: 'callout', x: 50, y: 50, text: 'Callout' }]);
+      expect(svg).toContain('Callout');
+      expect(svg).toContain('<rect');
+    });
+
+    it('should apply theme defaults', () => {
+      const svg = buildSvg(200, 200, [{ type: 'marker', x: 50, y: 50, number: 1 }], { theme: 'tutorial' });
+      // Tutorial theme uses green color (#43A047)
+      expect(svg).toContain('#43A047');
+    });
+
+    it('should skip unknown annotation types without crashing', () => {
+      const svg = buildSvg(200, 200, [{ type: 'nonexistent', x: 10, y: 10 }]);
+      expect(svg).toContain('width="200"');
+    });
+
+    it('should escape XML special characters in text', () => {
+      const svg = buildSvg(200, 200, [{ type: 'label', x: 10, y: 20, text: '<script>alert("xss")</script>' }]);
+      expect(svg).toContain('&lt;script&gt;');
+      expect(svg).not.toContain('<script>');
+    });
   });
 
   describe('validateAnnotation', () => {
@@ -76,6 +115,32 @@ describe('annotate.js', () => {
     it('should reject marker without coordinates', () => {
       expect(() => validateAnnotation({ type: 'marker' }))
         .toThrow(ValidationError);
+    });
+
+    it('should accept valid arrow annotation with from/to', () => {
+      expect(() => validateAnnotation({
+        type: 'arrow',
+        from: [0, 0],
+        to: [100, 100]
+      })).not.toThrow();
+    });
+
+    it('should reject arrow without from/to arrays', () => {
+      expect(() => validateAnnotation({ type: 'arrow', x: 10, y: 20 }))
+        .toThrow(ValidationError);
+    });
+
+    it('should reject connector without from/to arrays', () => {
+      expect(() => validateAnnotation({ type: 'connector' }))
+        .toThrow(ValidationError);
+    });
+
+    it('should accept valid curved-arrow annotation', () => {
+      expect(() => validateAnnotation({
+        type: 'curved-arrow',
+        from: [0, 0],
+        to: [100, 100]
+      })).not.toThrow();
     });
   });
 
