@@ -1,0 +1,36 @@
+QA EVIDENCE: Tool Consolidation (7 → 4 tools)
+=============================================
+
+VERIFICATION RESULTS:
+✓ Tool count: 4 tools remaining
+✓ Tools present:
+  1. annotate_screenshot
+  2. get_image_dimensions
+  3. create_step_guide
+  4. open_config_ui
+
+✓ Tools removed:
+  - highlight_area (REMOVED)
+  - add_callout (REMOVED)
+  - blur_area (REMOVED)
+
+✓ Handler functions deleted:
+  - handleHighlight (DELETED)
+  - handleCallout (DELETED)
+  - handleBlur (DELETED)
+
+✓ Switch statement cases removed:
+  - case 'highlight_area' (REMOVED)
+  - case 'add_callout' (REMOVED)
+  - case 'blur_area' (REMOVED)
+
+✓ Default case updated with migration message (CONFIRMED)
+
+✓ annotate_screenshot description updated with migration examples (CONFIRMED)
+
+TEST RESULTS:
+✓ npm test: 28 tests passed, 0 failed
+✓ All tests still green after refactoring
+
+CONCLUSION: Tool consolidation successful. All 3 convenience tools removed.
+Functionality preserved via annotate_screenshot with annotation types.

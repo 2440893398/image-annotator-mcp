@@ -1,0 +1,25 @@
+MIGRATION MESSAGE VERIFICATION
+==============================
+
+Default case handler now returns structured error with migration guidance:
+
+Message Content:
+Tool '${name}' is not available. If you were using highlight_area, add_callout, or blur_area, use annotate_screenshot with equivalent annotation types instead.
+
+Examples:
+• Blur: {"type":"blur","x":100,"y":100,"width":200,"height":50}
+• Highlight: {"type":"highlight","x":50,"y":50,"width":300,"height":100,"color":"yellow","opacity":0.35}
+• Callout: {"type":"callout","x":200,"y":200,"text":"Your note here","pointer":"bottom"}
+
+Response Structure:
+{
+  content: [{ type: 'text', text: '...' }],
+  isError: true
+}
+
+VERIFICATION:
+✓ Default case returns structured response (not thrown error)
+✓ isError flag set to true
+✓ Migration examples provided for all 3 removed tools
+✓ annotate_screenshot mentioned as replacement
+✓ Annotation type examples match actual supported types in annotate.js

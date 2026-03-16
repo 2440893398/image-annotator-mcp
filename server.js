@@ -55,7 +55,12 @@ Themes: documentation, tutorial, bugReport, highlight
 
 Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
         white, black, gray, lightGray, darkGray,
-        success, warning, error, info, primary, secondary, accent`,
+        success, warning, error, info, primary, secondary, accent
+
+Quick reference for common tasks:
+• Blur sensitive info: {type: "blur", x, y, width, height, intensity}
+• Highlight area: {type: "highlight", x, y, width, height, color, opacity}
+• Speech bubble: {type: "callout", x, y, text, pointer: "top|bottom|left|right"}`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -170,73 +175,6 @@ Perfect for tutorials and documentation.`,
     }
   },
   {
-    name: 'highlight_area',
-    description: 'Quickly highlight a specific area with a shape and optional label.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        input_path: { type: 'string' },
-        output_path: { type: 'string' },
-        shape: {
-          type: 'string',
-          enum: ['circle', 'rect', 'highlight'],
-          description: 'Shape type'
-        },
-        x: { type: 'number' },
-        y: { type: 'number' },
-        width: { type: 'number', description: 'Width (or diameter for circle)' },
-        height: { type: 'number', description: 'Height (for rect only)' },
-        color: { type: 'string', description: 'Color (default: red)' },
-        label: { type: 'string', description: 'Optional label' },
-        label_position: {
-          type: 'string',
-          enum: ['top', 'bottom', 'left', 'right'],
-          description: 'Label position relative to shape'
-        }
-      },
-      required: ['input_path', 'shape', 'x', 'y', 'width']
-    }
-  },
-  {
-    name: 'add_callout',
-    description: 'Add a callout (speech bubble) pointing to a specific location.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        input_path: { type: 'string' },
-        output_path: { type: 'string' },
-        x: { type: 'number', description: 'X coordinate where pointer points' },
-        y: { type: 'number', description: 'Y coordinate where pointer points' },
-        text: { type: 'string', description: 'Callout text (supports \\n for newlines)' },
-        pointer: {
-          type: 'string',
-          enum: ['top', 'bottom', 'left', 'right'],
-          description: 'Direction the pointer comes from'
-        },
-        color: { type: 'string' },
-        background: { type: 'string' }
-      },
-      required: ['input_path', 'x', 'y', 'text']
-    }
-  },
-  {
-    name: 'blur_area',
-    description: 'Blur a rectangular area to hide sensitive information.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        input_path: { type: 'string' },
-        output_path: { type: 'string' },
-        x: { type: 'number' },
-        y: { type: 'number' },
-        width: { type: 'number' },
-        height: { type: 'number' },
-        intensity: { type: 'number', description: 'Blur intensity (default: 8)' }
-      },
-      required: ['input_path', 'x', 'y', 'width', 'height']
-    }
-  },
-  {
     name: 'open_config_ui',
     description: `Open the annotation config UI in the browser. Call with no arguments to open immediately.
 
@@ -288,16 +226,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleDimensions(args);
       case 'create_step_guide':
         return await handleStepGuide(args);
-      case 'highlight_area':
-        return await handleHighlight(args);
-      case 'add_callout':
-        return await handleCallout(args);
-      case 'blur_area':
-        return await handleBlur(args);
       case 'open_config_ui':
         return await handleOpenConfigUi(args);
       default:
-        throw new Error(`Unknown tool: ${name}`);
+        return {
+          content: [{ type: 'text', text: `Tool '${name}' is not available. If you were using highlight_area, add_callout, or blur_area, use annotate_screenshot with equivalent annotation types instead.\n\nExamples:\n• Blur: {"type":"blur","x":100,"y":100,"width":200,"height":50}\n• Highlight: {"type":"highlight","x":50,"y":50,"width":300,"height":100,"color":"yellow","opacity":0.35}\n• Callout: {"type":"callout","x":200,"y":200,"text":"Your note here","pointer":"bottom"}` }],
+          isError: true
+        };
     }
   } catch (error) {
     let errorCode = 'UNKNOWN_ERROR';
@@ -440,128 +375,6 @@ async function handleStepGuide(args) {
     content: [{
       type: 'text',
       text: `✓ Step guide created: ${result.outputPath}\n  Steps: ${steps.length}`
-    }]
-  };
-}
-
-async function handleHighlight(args) {
-  const { input_path, output_path, shape, x, y, width, height, color = 'red', label, label_position = 'right' } = args;
-
-  if (!fs.existsSync(input_path)) {
-    throw new FileNotFoundError(input_path);
-  }
-
-  const annotations = [];
-
-  if (shape === 'circle') {
-    annotations.push({
-      type: 'circle',
-      x, y,
-      radius: width / 2,
-      color,
-      strokeWidth: 3
-    });
-  } else if (shape === 'highlight') {
-    annotations.push({
-      type: 'highlight',
-      x, y,
-      width,
-      height: height || width,
-      color: 'yellow',
-      opacity: 0.35
-    });
-  } else {
-    annotations.push({
-      type: 'rect',
-      x, y,
-      width,
-      height: height || width,
-      color,
-      strokeWidth: 3
-    });
-  }
-
-  if (label) {
-    let labelX, labelY;
-    const h = height || width;
-
-    switch (label_position) {
-      case 'top': labelX = x + width / 2; labelY = y - 10; break;
-      case 'bottom': labelX = x + width / 2; labelY = y + h + 20; break;
-      case 'left': labelX = x - 10; labelY = y + h / 2; break;
-      default: labelX = x + width + 15; labelY = y + h / 2;
-    }
-
-    annotations.push({
-      type: 'label',
-      x: labelX,
-      y: labelY,
-      text: label,
-      color,
-      fontSize: 16,
-      background: 'white',
-      shadow: true
-    });
-  }
-
-  const finalPath = output_path || getOutputPath(input_path, '-highlighted');
-  await annotateImage(input_path, finalPath, annotations);
-
-  return {
-    content: [{
-      type: 'text',
-      text: `✓ Highlighted: ${finalPath}`
-    }]
-  };
-}
-
-async function handleCallout(args) {
-  const { input_path, output_path, x, y, text, pointer = 'left', color = 'primary', background = 'white' } = args;
-
-  if (!fs.existsSync(input_path)) {
-    throw new FileNotFoundError(input_path);
-  }
-
-  const annotations = [{
-    type: 'callout',
-    x, y,
-    text,
-    pointer,
-    color,
-    background,
-    shadow: true
-  }];
-
-  const finalPath = output_path || getOutputPath(input_path, '-callout');
-  await annotateImage(input_path, finalPath, annotations);
-
-  return {
-    content: [{
-      type: 'text',
-      text: `✓ Callout added: ${finalPath}`
-    }]
-  };
-}
-
-async function handleBlur(args) {
-  const { input_path, output_path, x, y, width, height, intensity = 8 } = args;
-
-  if (!fs.existsSync(input_path)) {
-    throw new FileNotFoundError(input_path);
-  }
-
-  const annotations = [{
-    type: 'blur',
-    x, y, width, height, intensity
-  }];
-
-  const finalPath = output_path || getOutputPath(input_path, '-blurred');
-  await annotateImage(input_path, finalPath, annotations);
-
-  return {
-    content: [{
-      type: 'text',
-      text: `✓ Area blurred: ${finalPath}`
     }]
   };
 }
