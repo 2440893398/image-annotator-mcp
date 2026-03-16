@@ -50,11 +50,21 @@ class ValidationError extends AnnotationError {
   }
 }
 
+class CoordinateClampWarning {
+  constructor(annotation, property, original, clamped) {
+    this.annotation = annotation;
+    this.property = property;
+    this.original = original;
+    this.clamped = clamped;
+  }
+}
+
 module.exports = {
   AnnotationError,
   FileNotFoundError,
   InvalidParameterError,
   ImageProcessingError,
   AnnotationTypeError,
-  ValidationError
+  ValidationError,
+  CoordinateClampWarning
 };

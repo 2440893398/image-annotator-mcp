@@ -53,7 +53,7 @@ function loadConfigFile(configPath) {
     const config = JSON.parse(content);
     return { ...DEFAULT_CONFIG, ...config };
   } catch (e) {
-    console.warn(`Warning: Failed to load config from ${configPath}: ${e.message}`);
+    process.stderr.write(`[image-annotator] WARN: Failed to load config from ${configPath}: ${e.message}\n`);
     return DEFAULT_CONFIG;
   }
 }

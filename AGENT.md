@@ -139,3 +139,23 @@ Coordinates are in image pixels. When using with Playwright:
 - **映射文件**: `scripts/weknora-sync-map.json`
 
 自动同步：Git commit 后自动将修改的 `.md` 文件同步到知识库（删除旧记录 → 重新添加）。
+
+## NotebookLM 知识库
+
+用于项目文档的 AI 问答和学习材料生成：
+
+- **知识库 ID**: `828361cf-85ae-4411-afaf-08bfda8c3a90`
+- **知识库名称**: Image Annotator MCP Server Design and Testing Plans
+- **访问链接**: https://notebooklm.google.com/notebook/828361cf-85ae-4411-afaf-08bfda8c3a90
+
+### 使用场景
+
+1. **查询项目信息** - 当需要了解项目架构、设计决策、技术实现时，可使用 `notebook_query` 向知识库提问
+2. **生成学习材料** - 使用 `studio_create` 生成播客、测验、幻灯片、报告等
+3. **添加新文档** - 新增或修改文档后，使用 `source_add` 将更新同步到知识库
+
+### 同步规则
+
+- 新增 `.md` 文档后，同步添加到 NotebookLM 知识库
+- 修改重要文档（如设计文档、技术方案）后，更新知识库中的对应来源
+- 可通过 `notebook_list` 和 `notebook_get` 查看知识库状态

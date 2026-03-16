@@ -9,15 +9,24 @@
  */
 
 const sharp = require('sharp');
+const { optimize } = require('svgo');
 const path = require('path');
 const fs = require('fs');
 const { loadConfig, saveConfig } = require('./config-loader');
+
+/**
+ * Write a structured log message to stderr
+ */
+function log(level, message) {
+  process.stderr.write(`[image-annotator] ${level.toUpperCase()}: ${message}\n`);
+}
 
 const {
   FileNotFoundError,
   InvalidParameterError,
   ImageProcessingError,
-  ValidationError
+  ValidationError,
+  CoordinateClampWarning
 } = require('./annotate-errors');
 
 // Professional font stacks (replacing Comic Sans)
@@ -103,15 +112,53 @@ const SIZE_PRESETS = {
   xl: { markerSize: 48, strokeWidth: 8, fontSize: 28 }    // > 1920px
 };
 
+const OUTPUT_FORMAT_EXTENSIONS = {
+  png: '.png',
+  jpeg: '.jpg',
+  webp: '.webp',
+  avif: '.avif'
+};
+
+const SVGO_CONFIG = {
+  plugins: [{
+    name: 'preset-default',
+    params: {
+      overrides: {
+        cleanupIds: false,
+        removeXMLProcInst: true
+      }
+    }
+  }]
+};
+
 /**
- * Get size preset based on image width
+ * Get size preset based on image dimensions
  */
-function getSizePreset(imageWidth) {
-  if (imageWidth < 400) return 'xs';
-  if (imageWidth < 800) return 's';
-  if (imageWidth < 1200) return 'm';
-  if (imageWidth < 1920) return 'l';
-  return 'xl';
+function getSizePreset(imageWidth, imageHeight = imageWidth) {
+  const presetNames = ['xs', 's', 'm', 'l', 'xl'];
+  let presetIndex;
+
+  if (imageWidth < 400) {
+    presetIndex = 0;
+  } else if (imageWidth < 800) {
+    presetIndex = 1;
+  } else if (imageWidth < 1200) {
+    presetIndex = 2;
+  } else if (imageWidth <= 1920) {
+    presetIndex = 3;
+  } else {
+    presetIndex = 4;
+  }
+
+  const aspectRatio = imageWidth / imageHeight;
+  if (aspectRatio < 0.5) {
+    presetIndex += 1;
+  } else if (aspectRatio > 3) {
+    presetIndex -= 1;
+  }
+
+  const clampedIndex = Math.max(0, Math.min(presetNames.length - 1, presetIndex));
+  return presetNames[clampedIndex];
 }
 
 // Text width estimation coefficient (average character width / font size ratio) for narrow-only text
@@ -206,10 +253,22 @@ function getColor(color) {
  * Generate unique ID for SVG elements using crypto UUID
  */
 const crypto = require('crypto');
+let customIdGenerator = null;
 
 function generateId(prefix = 'ann') {
+  if (typeof customIdGenerator === 'function') {
+    return customIdGenerator(prefix);
+  }
   const randomPart = crypto.randomBytes(4).toString('hex');
   return `${prefix}-${randomPart}`;
+}
+
+function setIdGenerator(generator) {
+  customIdGenerator = typeof generator === 'function' ? generator : null;
+}
+
+function resetIdGenerator() {
+  customIdGenerator = null;
 }
 
 /**
@@ -762,7 +821,7 @@ function buildSvg(width, height, annotations, options = {}) {
         result = createIcon(mergedAnn);
         break;
       default:
-        console.warn(`Unknown annotation type: ${ann.type}`);
+        log('WARN', `Unknown annotation type: ${ann.type}`);
         continue;
     }
 
@@ -800,15 +859,29 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
   // Check image size
   checkImageSize(metadata);
 
+  const devicePixelRatio = options.devicePixelRatio || 1;
+  const scaledAnnotations = devicePixelRatio !== 1
+    ? annotations.map((annotation) => scaleAnnotationCoords(annotation, devicePixelRatio))
+    : annotations;
+  const padding = normalizeCanvasPadding(options.canvasPadding);
+  const extendedWidth = width + padding.left + padding.right;
+  const extendedHeight = height + padding.top + padding.bottom;
+  const offsetAnnotations = (padding.left || padding.top)
+    ? scaledAnnotations.map((annotation) => offsetAnnotationCoords(annotation, padding.left, padding.top))
+    : scaledAnnotations;
+
+  // Clamp annotation coordinates to valid bounds
+  const { annotations: validAnnotations, warnings } = clampAnnotations(offsetAnnotations, extendedWidth, extendedHeight);
+
   // Load config if not provided
   // Try to load config from the input file's directory first, then fall back to cwd
   const inputDir = path.dirname(inputPath);
   const config = options.config || loadConfig(inputDir) || loadConfig();
   
-  // Get size preset based on image width
+  // Get size preset based on image dimensions
   let sizePreset = config.sizePreset;
   if (sizePreset === 'auto' || !sizePreset) {
-    sizePreset = getSizePreset(width);
+    sizePreset = getSizePreset(width, height);
   }
   
   const baseSizes = SIZE_PRESETS[sizePreset] || SIZE_PRESETS.m;
@@ -825,28 +898,60 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
   };
 
   // Build SVG overlay
-  const svg = buildSvg(width, height, annotations, enhancedOptions);
+  const svg = buildSvg(extendedWidth, extendedHeight, validAnnotations, enhancedOptions);
+  const optimizedSvg = optimizeSvg(svg);
+  const outputFormat = normalizeOutputFormat(outputPath, options.outputFormat);
+  const finalOutputPath = resolveOutputPathForFormat(outputPath, outputFormat);
+  const quality = options.quality ?? getDefaultQuality(outputFormat);
+  const altText = generateAltText(validAnnotations, extendedWidth, extendedHeight, enhancedOptions);
 
   // Composite SVG onto image
   try {
-    await sharp(inputPath)
+    let pipeline = sharp(inputPath);
+
+    if (padding.top || padding.right || padding.bottom || padding.left) {
+      pipeline = pipeline.extend({
+        top: padding.top,
+        right: padding.right,
+        bottom: padding.bottom,
+        left: padding.left,
+        background: { r: 255, g: 255, b: 255, alpha: 0 }
+      });
+    }
+
+    pipeline = pipeline
       .composite([{
-        input: Buffer.from(svg),
+        input: Buffer.from(optimizedSvg),
         top: 0,
         left: 0
-      }])
-      .toFile(outputPath);
+      }]);
+
+    if (outputFormat === 'webp') {
+      pipeline = pipeline.webp({ quality });
+    } else if (outputFormat === 'avif') {
+      pipeline = pipeline.avif({ quality, effort: 1 });
+    } else if (outputFormat === 'jpeg') {
+      pipeline = pipeline.jpeg({ quality });
+    }
+
+    await pipeline.toFile(finalOutputPath);
   } catch (err) {
     throw new ImageProcessingError(`Failed to composite annotations: ${err.message}`, err);
   }
 
   return {
-    outputPath,
-    width,
-    height,
+    outputPath: finalOutputPath,
+    width: extendedWidth,
+    height: extendedHeight,
     annotationCount: annotations.length,
+    warnings,
     sizePreset,
-    theme: enhancedOptions.theme
+    theme: enhancedOptions.theme,
+    devicePixelRatio,
+    canvasPadding: padding,
+    outputFormat,
+    quality,
+    altText
   };
 }
 
@@ -870,10 +975,242 @@ function checkImageSize(metadata) {
   const FOUR_K_PIXELS = 3840 * 2160; // ~8.3MP
 
   if (pixels > FOUR_K_PIXELS) {
-    console.warn(`Warning: Large image detected (${metadata.width}x${metadata.height}, ${(pixels/1000000).toFixed(1)}MP). Processing may be slow.`);
+    log('WARN', `Large image detected (${metadata.width}x${metadata.height}, ${(pixels/1000000).toFixed(1)}MP). Processing may be slow.`);
   }
 
   return pixels > FOUR_K_PIXELS;
+}
+
+function optimizeSvg(svg) {
+  if (typeof svg !== 'string' || svg.length === 0) {
+    return svg;
+  }
+
+  try {
+    return optimize(svg, SVGO_CONFIG).data;
+  } catch (error) {
+    log('WARN', `SVGO optimization failed, using original SVG: ${error.message}`);
+    return svg;
+  }
+}
+
+function normalizeOutputFormat(outputPath, requestedFormat) {
+  if (requestedFormat) {
+    return requestedFormat;
+  }
+
+  const extension = outputPath ? path.extname(outputPath).toLowerCase() : '';
+  if (extension === '.jpg' || extension === '.jpeg') return 'jpeg';
+  if (extension === '.webp') return 'webp';
+  if (extension === '.avif') return 'avif';
+  return 'png';
+}
+
+function resolveOutputPathForFormat(outputPath, outputFormat) {
+  if (!outputPath) return outputPath;
+
+  const currentExt = path.extname(outputPath);
+  const desiredExt = OUTPUT_FORMAT_EXTENSIONS[outputFormat];
+  if (!desiredExt) return outputPath;
+
+  if (!currentExt) {
+    return `${outputPath}${desiredExt}`;
+  }
+
+  if (currentExt.toLowerCase() !== desiredExt) {
+    return `${outputPath.slice(0, -currentExt.length)}${desiredExt}`;
+  }
+
+  return outputPath;
+}
+
+function getDefaultQuality(outputFormat) {
+  if (outputFormat === 'avif') return 50;
+  if (outputFormat === 'jpeg' || outputFormat === 'webp') return 80;
+  return undefined;
+}
+
+function scaleAnnotationCoords(annotation, dpr) {
+  if (!annotation || typeof annotation !== 'object' || !Number.isFinite(dpr) || dpr === 1) {
+    return annotation;
+  }
+
+  const scaled = { ...annotation };
+  const scaleValue = (value) => (typeof value === 'number' ? value * dpr : value);
+
+  if (scaled.x !== undefined) scaled.x = scaleValue(scaled.x);
+  if (scaled.y !== undefined) scaled.y = scaleValue(scaled.y);
+  if (scaled.width !== undefined) scaled.width = scaleValue(scaled.width);
+  if (scaled.height !== undefined) scaled.height = scaleValue(scaled.height);
+  if (scaled.radius !== undefined) scaled.radius = scaleValue(scaled.radius);
+  if (Array.isArray(scaled.from)) scaled.from = scaled.from.map(scaleValue);
+  if (Array.isArray(scaled.to)) scaled.to = scaled.to.map(scaleValue);
+
+  return scaled;
+}
+
+function normalizeCanvasPadding(canvasPadding) {
+  if (typeof canvasPadding === 'number') {
+    return {
+      top: canvasPadding,
+      right: canvasPadding,
+      bottom: canvasPadding,
+      left: canvasPadding
+    };
+  }
+
+  if (canvasPadding && typeof canvasPadding === 'object') {
+    return {
+      top: canvasPadding.top || 0,
+      right: canvasPadding.right || 0,
+      bottom: canvasPadding.bottom || 0,
+      left: canvasPadding.left || 0
+    };
+  }
+
+  return { top: 0, right: 0, bottom: 0, left: 0 };
+}
+
+function offsetAnnotationCoords(annotation, offsetX, offsetY) {
+  if (!annotation || typeof annotation !== 'object' || (!offsetX && !offsetY)) {
+    return annotation;
+  }
+
+  const shifted = { ...annotation };
+  if (shifted.x !== undefined) shifted.x += offsetX;
+  if (shifted.y !== undefined) shifted.y += offsetY;
+  if (Array.isArray(shifted.from)) shifted.from = [shifted.from[0] + offsetX, shifted.from[1] + offsetY];
+  if (Array.isArray(shifted.to)) shifted.to = [shifted.to[0] + offsetX, shifted.to[1] + offsetY];
+  return shifted;
+}
+
+function generateAltText(annotations, imageWidth, imageHeight, options = {}) {
+  if (!annotations || annotations.length === 0) {
+    return `Image (${imageWidth}x${imageHeight}) with no annotations`;
+  }
+
+  const themeText = options.theme ? `, theme ${options.theme}` : '';
+  const counts = new Map();
+  const details = [];
+
+  for (const annotation of annotations) {
+    const type = annotation.type || 'unknown';
+    counts.set(type, (counts.get(type) || 0) + 1);
+
+    if (type === 'callout' && annotation.text) {
+      details.push(`callout "${annotation.text}"`);
+    } else if (type === 'label' && annotation.text) {
+      details.push(`label "${annotation.text}"`);
+    } else if (type === 'marker' && annotation.number !== undefined && annotation.x !== undefined && annotation.y !== undefined) {
+      details.push(`marker #${annotation.number} at (${annotation.x},${annotation.y})`);
+    }
+  }
+
+  const summary = Array.from(counts.entries())
+    .map(([type, count]) => `${count} ${type}${count > 1 ? 's' : ''}`)
+    .join(', ');
+
+  return `Annotated image (${imageWidth}x${imageHeight}${themeText}): ${summary}${details.length ? `; ${details.join('; ')}` : ''}`;
+}
+
+/**
+ * Clamp annotation coordinates to valid bounds
+ * Returns clamped annotations and warnings for any values that were adjusted
+ */
+function clampAnnotations(annotations, imageWidth, imageHeight) {
+  if (!annotations || !Array.isArray(annotations)) {
+    return { annotations: [], warnings: [] };
+  }
+
+  const clampedAnnotations = [];
+  const warnings = [];
+
+  for (let i = 0; i < annotations.length; i++) {
+    const ann = annotations[i];
+    const clamped = { ...ann };
+
+    // Helper to clamp a value and record warning
+    const clampValue = (prop, min, max, original) => {
+      if (original === undefined || original === null || isNaN(original)) {
+        return min;
+      }
+      if (!isFinite(original)) {
+        return min;
+      }
+      if (original < min) {
+        warnings.push(new CoordinateClampWarning(i, prop, original, min));
+        return min;
+      }
+      if (original > max) {
+        warnings.push(new CoordinateClampWarning(i, prop, original, max));
+        return max;
+      }
+      return original;
+    };
+
+    // Clamp positional coordinates
+    if (clamped.x !== undefined) {
+      clamped.x = clampValue('x', 0, imageWidth, clamped.x);
+    }
+    if (clamped.y !== undefined) {
+      clamped.y = clampValue('y', 0, imageHeight, clamped.y);
+    }
+
+    // Clamp dimensions (width/height)
+    if (clamped.width !== undefined) {
+      const maxWidth = imageWidth - (clamped.x || 0);
+      clamped.width = clampValue('width', 1, maxWidth, clamped.width);
+    }
+    if (clamped.height !== undefined) {
+      const maxHeight = imageHeight - (clamped.y || 0);
+      clamped.height = clampValue('height', 1, maxHeight, clamped.height);
+    }
+
+    // Clamp radius
+    if (clamped.radius !== undefined) {
+      const maxRadius = Math.min(imageWidth, imageHeight) / 2;
+      clamped.radius = clampValue('radius', 1, maxRadius, clamped.radius);
+    }
+
+    // Clamp arrow from/to coordinates
+    if (clamped.from && Array.isArray(clamped.from)) {
+      if (clamped.from[0] !== undefined) {
+        clamped.from[0] = clampValue('from[0]', 0, imageWidth, clamped.from[0]);
+      }
+      if (clamped.from[1] !== undefined) {
+        clamped.from[1] = clampValue('from[1]', 0, imageHeight, clamped.from[1]);
+      }
+    }
+    if (clamped.to && Array.isArray(clamped.to)) {
+      if (clamped.to[0] !== undefined) {
+        clamped.to[0] = clampValue('to[0]', 0, imageWidth, clamped.to[0]);
+      }
+      if (clamped.to[1] !== undefined) {
+        clamped.to[1] = clampValue('to[1]', 0, imageHeight, clamped.to[1]);
+      }
+    }
+
+    // Clamp display properties to positive values
+    if (clamped.size !== undefined) {
+      clamped.size = clampValue('size', 1, Infinity, clamped.size);
+    }
+    if (clamped.fontSize !== undefined) {
+      clamped.fontSize = clampValue('fontSize', 1, Infinity, clamped.fontSize);
+    }
+    if (clamped.strokeWidth !== undefined) {
+      clamped.strokeWidth = clampValue('strokeWidth', 1, Infinity, clamped.strokeWidth);
+    }
+    if (clamped.cornerRadius !== undefined) {
+      clamped.cornerRadius = clampValue('cornerRadius', 0, Infinity, clamped.cornerRadius);
+    }
+    if (clamped.opacity !== undefined) {
+      clamped.opacity = clampValue('opacity', 0, 1, clamped.opacity);
+    }
+
+    clampedAnnotations.push(clamped);
+  }
+
+  return { annotations: clampedAnnotations, warnings };
 }
 
 /**
@@ -951,7 +1288,20 @@ module.exports = {
   THEMES,
   THEME_FONTS,
   SIZE_PRESETS,
+  OUTPUT_FORMAT_EXTENSIONS,
+  SVGO_CONFIG,
   getSizePreset,
+  clampAnnotations,
+  optimizeSvg,
+  normalizeOutputFormat,
+  resolveOutputPathForFormat,
+  getDefaultQuality,
+  scaleAnnotationCoords,
+  normalizeCanvasPadding,
+  offsetAnnotationCoords,
+  generateAltText,
+  setIdGenerator,
+  resetIdGenerator,
   // Validation functions
   validateAnnotation,
   validateAnnotations,
@@ -984,7 +1334,9 @@ function validateAnnotations(annotations) {
   if (!Array.isArray(annotations)) {
     throw new ValidationError('Annotations must be an array');
   }
-  annotations.forEach((ann, i) => validateAnnotation(ann));
+  annotations.forEach((ann) => {
+    validateAnnotation(ann);
+  });
   return true;
 }
 
