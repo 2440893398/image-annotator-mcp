@@ -787,4 +787,81 @@ describe('annotate.js', () => {
       expect(collisionWarnings).toHaveLength(0);
     }, 15000);
   });
+
+  describe('injectA11y', () => {
+    it('should add role="img" to SVG root element', () => {
+      const { injectA11y } = require('./annotate.js');
+      const svgString = '<svg width="100" height="100"><defs></defs></svg>';
+      const result = injectA11y(svgString, 'Test image', []);
+      expect(result).toContain('role="img"');
+      expect(result).toContain('aria-labelledby="svg-title"');
+    });
+
+    it('should add <title> element with truncated altText', () => {
+      const { injectA11y } = require('./annotate.js');
+      const svgString = '<svg width="100" height="100"><defs></defs></svg>';
+      const longText = 'a'.repeat(150);
+      const result = injectA11y(svgString, longText, []);
+      expect(result).toContain('<title id="svg-title">');
+      expect(result).toContain('...');
+      // Verify truncation: title should have 100 'a's + '...' but not 101+ 'a's in a row
+      const titleMatch = result.match(/<title[^>]*>([^<]*)<\/title>/);
+      expect(titleMatch).toBeTruthy();
+      expect(titleMatch[1]).toMatch(/^a{100}\.\.\./);
+    });
+
+    it('should add <desc> element with full altText', () => {
+      const { injectA11y } = require('./annotate.js');
+      const svgString = '<svg width="100" height="100"><defs></defs></svg>';
+      const altText = 'Full description of the image';
+      const result = injectA11y(svgString, altText, []);
+      expect(result).toContain('<desc id="svg-desc">');
+      expect(result).toContain(altText);
+    });
+
+    it('should escape XML special characters in title and desc', () => {
+      const { injectA11y } = require('./annotate.js');
+      const svgString = '<svg width="100" height="100"><defs></defs></svg>';
+      const altText = 'Image with <special> & "characters"';
+      const result = injectA11y(svgString, altText, []);
+      expect(result).toContain('&lt;');
+      expect(result).toContain('&gt;');
+      expect(result).toContain('&amp;');
+      expect(result).toContain('&quot;');
+    });
+
+    it('should insert title and desc into <defs> if present', () => {
+      const { injectA11y } = require('./annotate.js');
+      const svgString = '<svg width="100" height="100"><defs><style></style></defs><g></g></svg>';
+      const result = injectA11y(svgString, 'Test', []);
+      expect(result).toContain('<defs><title id="svg-title">');
+      expect(result).toContain('<desc id="svg-desc">');
+    });
+
+    it('should insert title and desc after svg opening tag if no <defs>', () => {
+      const { injectA11y } = require('./annotate.js');
+      const svgString = '<svg width="100" height="100"><g></g></svg>';
+      const result = injectA11y(svgString, 'Test', []);
+      expect(result).toContain('<title id="svg-title">');
+      expect(result).toContain('<desc id="svg-desc">');
+      // Verify they come after the svg opening tag
+      const svgOpenIndex = result.indexOf('<svg');
+      const titleIndex = result.indexOf('<title');
+      expect(titleIndex).toBeGreaterThan(svgOpenIndex);
+    });
+
+    it('should handle empty altText gracefully', () => {
+      const { injectA11y } = require('./annotate.js');
+      const svgString = '<svg width="100" height="100"><defs></defs></svg>';
+      const result = injectA11y(svgString, '', []);
+      expect(result).toContain('<title id="svg-title">');
+      expect(result).toContain('<desc id="svg-desc">');
+    });
+
+    it('should return unchanged SVG if input is not a string', () => {
+      const { injectA11y } = require('./annotate.js');
+      const result = injectA11y(null, 'Test', []);
+      expect(result).toBeNull();
+    });
+  });
 });

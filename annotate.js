@@ -913,7 +913,8 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
   // For SVG output: write annotation-only SVG directly, skip sharp compositing
   if (outputFormat === 'svg') {
     try {
-      fs.writeFileSync(finalOutputPath, optimizedSvg);
+      const a11ySvg = injectA11y(optimizedSvg, altText, validAnnotations);
+      fs.writeFileSync(finalOutputPath, a11ySvg);
     } catch (err) {
       throw new ImageProcessingError(`Failed to write SVG output: ${err.message}`, err);
     }
@@ -1409,6 +1410,47 @@ function detectCollisions(annotations, sizePreset) {
   return warnings;
 }
 
+/**
+ * Inject ARIA semantics into SVG output for accessibility
+ * Adds role="img", aria-labelledby, <title>, and <desc> elements
+ * @param {string} svgString - The SVG content as a string
+ * @param {string} altText - The alt text for the image
+ * @param {Array} annotations - The annotations array (for reference, not used in current implementation)
+ * @returns {string} SVG with injected A11y semantics
+ */
+function injectA11y(svgString, altText, annotations = []) {
+  if (!svgString || typeof svgString !== 'string') {
+    return svgString;
+  }
+
+  // Truncate altText to 100 chars for title
+  const titleText = altText.length > 100 ? altText.substring(0, 100) + '...' : altText;
+  const descText = altText;
+
+  // Inject role="img" and aria-labelledby into the <svg> opening tag
+  let result = svgString.replace(
+    /<svg\s/,
+    '<svg role="img" aria-labelledby="svg-title" '
+  );
+
+  // Inject <title> and <desc> at the start of <defs> or after <svg> opening tag
+  // Look for <defs> and insert after it opens, or create them if no <defs>
+  if (result.includes('<defs>')) {
+    result = result.replace(
+      /<defs>/,
+      `<defs><title id="svg-title">${escapeXml(titleText)}</title><desc id="svg-desc">${escapeXml(descText)}</desc>`
+    );
+  } else {
+    // If no <defs>, insert after the <svg> opening tag
+    result = result.replace(
+      /(<svg[^>]*>)/,
+      `$1<title id="svg-title">${escapeXml(titleText)}</title><desc id="svg-desc">${escapeXml(descText)}</desc>`
+    );
+  }
+
+  return result;
+}
+
 module.exports = {
   annotateImage,
   buildSvg,
@@ -1438,7 +1480,9 @@ module.exports = {
   ValidationError,
   // Collision detection
   getBoundingBox,
-  detectCollisions
+  detectCollisions,
+  // A11y
+  injectA11y
 };
 
 // Validation functions
