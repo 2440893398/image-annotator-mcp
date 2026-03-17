@@ -8,6 +8,6 @@ This directory contains detailed reference documentation for the Image Annotator
 - **cli-commands.md**: (Coming Soon) Detailed reference for all CLI subcommands and options.
 - **annotation-workflows.md**: (Coming Soon) Best practices for common annotation tasks (documentation, bug reports, etc.).
 - **windows-notes.md**: (Coming Soon) Specific considerations for running the tool on Windows.
-- **config-ui.md**: (Coming Soon) Guide to using the browser-based configuration interface.
-- **guardrails.md**: (Coming Soon) Detailed safety and usage constraints.
+- **[config-ui.md](./config-ui.md)**: Guide to using the browser-based configuration interface.
+- **[guardrails.md](./guardrails.md)**: Detailed safety and usage constraints.
 - **recipes.md**: (Coming Soon) Copy-pasteable annotation examples for common scenarios.
