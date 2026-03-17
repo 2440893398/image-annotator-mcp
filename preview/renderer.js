@@ -24,6 +24,46 @@ const EAST_ASIAN_WIDE_RANGES = [
   [0xff00, 0xffef], [0x20000, 0x2fffd], [0x30000, 0x3fffd]
 ];
 
+// Size presets based on image dimensions (synced with annotate.js Phase 1 R2)
+const SIZE_PRESETS = {
+  xs: { markerSize: 20, strokeWidth: 3, fontSize: 12 },   // < 400px
+  s:  { markerSize: 24, strokeWidth: 4, fontSize: 14 },   // 400-800px
+  m:  { markerSize: 32, strokeWidth: 5, fontSize: 18 },   // 800-1200px (default)
+  l:  { markerSize: 40, strokeWidth: 6, fontSize: 22 },   // 1200-1920px
+  xl: { markerSize: 48, strokeWidth: 8, fontSize: 28 }    // > 1920px
+};
+
+/**
+ * Get size preset based on image dimensions (2D aspect ratio algorithm)
+ * Synced with annotate.js getSizePreset — Phase 1 R2
+ */
+function getSizePreset(imageWidth, imageHeight = imageWidth) {
+  const presetNames = ['xs', 's', 'm', 'l', 'xl'];
+  let presetIndex;
+
+  if (imageWidth < 400) {
+    presetIndex = 0;
+  } else if (imageWidth < 800) {
+    presetIndex = 1;
+  } else if (imageWidth < 1200) {
+    presetIndex = 2;
+  } else if (imageWidth <= 1920) {
+    presetIndex = 3;
+  } else {
+    presetIndex = 4;
+  }
+
+  const aspectRatio = imageWidth / imageHeight;
+  if (aspectRatio < 0.5) {
+    presetIndex += 1;
+  } else if (aspectRatio > 3) {
+    presetIndex -= 1;
+  }
+
+  const clampedIndex = Math.max(0, Math.min(presetNames.length - 1, presetIndex));
+  return presetNames[clampedIndex];
+}
+
 function isEastAsianWide(codepoint) {
   if (typeof codepoint !== 'number' || codepoint < 0) return false;
   for (let i = 0; i < EAST_ASIAN_WIDE_RANGES.length; i++) {
@@ -388,7 +428,9 @@ function svgToDataUrl(svg) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     COLORS,
+    SIZE_PRESETS,
     getColor,
+    getSizePreset,
     buildSvg,
     svgToDataUrl,
     createMarker,

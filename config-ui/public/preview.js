@@ -205,6 +205,22 @@ function updatePreview() {
   // Get annotation color based on marker color selection
   const annotationColor = state.markerColor;
 
+  // Resolve sizes: use getSizePreset when autoSize is enabled
+  const PREVIEW_WIDTH = 250;
+  const PREVIEW_HEIGHT = 180;
+  let markerSize, arrowWidth, labelFontSize;
+  if (state.autoSize && typeof getSizePreset === 'function') {
+    const presetName = getSizePreset(PREVIEW_WIDTH, PREVIEW_HEIGHT);
+    const preset = SIZE_PRESETS[presetName];
+    markerSize = preset.markerSize;
+    arrowWidth = preset.strokeWidth;
+    labelFontSize = preset.fontSize;
+  } else {
+    markerSize = state.markerSize;
+    arrowWidth = state.arrowWidth;
+    labelFontSize = state.labelFontSize;
+  }
+
   // Use shared renderer to build preview SVG
   // Create sample annotations that demonstrate current settings
   const sampleAnnotations = [
@@ -215,7 +231,7 @@ function updatePreview() {
       y: 60,
       number: 1,
       color: annotationColor,
-      size: state.markerSize,
+      size: markerSize,
       style: 'filled',
       shadow: true
     },
@@ -225,7 +241,7 @@ function updatePreview() {
       from: [90, 90],
       to: [180, 60],
       color: annotationColor,
-      strokeWidth: state.arrowWidth,
+      strokeWidth: arrowWidth,
       style: 'solid',
       headStyle: 'filled',
       shadow: true
@@ -237,7 +253,7 @@ function updatePreview() {
       y: 130,
       text: '标注文字',
       color: 'darkGray',
-      fontSize: state.labelFontSize,
+      fontSize: labelFontSize,
       background: 'white',
       padding: 10,
       shadow: true,
