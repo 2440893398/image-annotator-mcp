@@ -410,6 +410,7 @@ async function handleStepGuide(args) {
     throw new FileNotFoundError(input_path);
   }
 
+  const dpr = device_pixel_ratio || 1;
   const colors = ['primary', 'green', 'orange', 'purple', 'cyan'];
   const annotations = [];
 
@@ -428,13 +429,13 @@ async function handleStepGuide(args) {
     });
 
     // Label with arrow
-    const labelX = step.x + 50;
+    const labelX = step.x + Math.round(50 * dpr);
     const labelY = step.y;
 
     annotations.push({
       type: 'arrow',
-      from: [step.x + 28, step.y],
-      to: [labelX - 5, labelY],
+      from: [step.x + Math.round(28 * dpr), step.y],
+      to: [labelX - Math.round(5 * dpr), labelY],
       color,
       strokeWidth: 2
     });
@@ -442,7 +443,7 @@ async function handleStepGuide(args) {
     annotations.push({
       type: 'label',
       x: labelX,
-      y: labelY + 6,
+      y: labelY + Math.round(6 * dpr),
       text: step.label,
       color: 'darkGray',
       fontSize: 16,
@@ -455,8 +456,8 @@ async function handleStepGuide(args) {
       const next = steps[i + 1];
       annotations.push({
         type: 'connector',
-        from: [step.x, step.y + 30],
-        to: [next.x, next.y - 30],
+        from: [step.x, step.y + Math.round(30 * dpr)],
+        to: [next.x, next.y - Math.round(30 * dpr)],
         color: 'gray'
       });
     }
