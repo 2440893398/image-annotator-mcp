@@ -762,7 +762,7 @@ function buildSvg(width, height, annotations, options = {}) {
   // Apply theme defaults if specified (custom themes take precedence)
   const themeDefaults = customThemes?.[theme] || (theme ? THEMES[theme] : null);
 
-  for (const ann of annotations) {
+  for (const [i, ann] of annotations.entries()) {
     // Merge with theme defaults first
     let mergedAnn = themeDefaults && themeDefaults[ann.type]
       ? { ...themeDefaults[ann.type], ...ann }
@@ -828,7 +828,12 @@ function buildSvg(width, height, annotations, options = {}) {
 
     if (result) {
       if (result.defs) defs.push(result.defs);
-      if (result.element) elements.push(result.element);
+      if (result.element) {
+        const element = options.outputFormat === 'svg'
+          ? `<g data-annotation-index="${i}">${result.element}</g>`
+          : result.element;
+        elements.push(element);
+      }
     }
   }
 
@@ -839,6 +844,67 @@ function buildSvg(width, height, annotations, options = {}) {
   </defs>
   ${elements.join('\n')}
 </svg>`;
+}
+
+/**
+ * Apply regex-based privacy redaction to annotations.
+ *
+ * Inspects annotations that have a string `text` field (label, callout).
+ * For each annotation whose text matches at least one pattern, appends a
+ * `blur` annotation covering the annotation's bounding box.
+ *
+ * @param {Object[]} annotations - Array of annotation objects (not mutated)
+ * @param {string[]} redactPatterns - Array of regex pattern strings
+ * @param {string} [sizePreset='m'] - Size preset key for bounding-box calculation
+ * @returns {Object[]} New array with original annotations plus any generated blur annotations
+ * @throws {InvalidParameterError} If any pattern string is not a valid regex
+ */
+function applyRedactPatterns(annotations, redactPatterns, sizePreset = 'm') {
+  if (!redactPatterns || redactPatterns.length === 0) {
+    return annotations;
+  }
+
+  // Compile all patterns upfront; throw on invalid regex
+  const regexes = redactPatterns.map((pattern) => {
+    try {
+      return new RegExp(pattern);
+    } catch (e) {
+      throw new InvalidParameterError('redact_patterns', `Invalid regex pattern "${pattern}": ${e.message}`);
+    }
+  });
+
+  const blurAnnotations = [];
+  const redactedIndices = new Set();
+
+  for (let i = 0; i < annotations.length; i++) {
+    const ann = annotations[i];
+    // Only consider annotations with a string text field
+    if (typeof ann.text !== 'string') continue;
+
+    const matches = regexes.some((re) => re.test(ann.text));
+    if (!matches) continue;
+
+    // Avoid duplicate blur for the same source annotation
+    if (redactedIndices.has(i)) continue;
+    redactedIndices.add(i);
+
+    const box = getBoundingBox(ann, sizePreset);
+    if (!box) continue;
+
+    blurAnnotations.push({
+      type: 'blur',
+      x: box.x,
+      y: box.y,
+      width: box.w,
+      height: box.h
+    });
+  }
+
+  if (blurAnnotations.length === 0) {
+    return annotations;
+  }
+
+  return [...annotations, ...blurAnnotations];
 }
 
 /**
@@ -860,10 +926,27 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
   // Check image size
   checkImageSize(metadata);
 
+  // Load config if not provided
+  // Try to load config from the input file's directory first, then fall back to cwd
+  const inputDir = path.dirname(inputPath);
+  const config = options.config || loadConfig(inputDir) || loadConfig();
+
+  // Get size preset based on image dimensions (must be before applyRedactPatterns and clamping)
+  let sizePreset = config.sizePreset;
+  if (sizePreset === 'auto' || !sizePreset) {
+    sizePreset = getSizePreset(width, height);
+  }
+
+  // Apply regex-based redaction before scaling/offsetting so text matching works on original annotations
+  const redactPatterns = options.redactPatterns;
+  const redactedAnnotations = (redactPatterns && redactPatterns.length > 0)
+    ? applyRedactPatterns(annotations, redactPatterns, sizePreset)
+    : annotations;
+
   const devicePixelRatio = options.devicePixelRatio || 1;
   const scaledAnnotations = devicePixelRatio !== 1
-    ? annotations.map((annotation) => scaleAnnotationCoords(annotation, devicePixelRatio))
-    : annotations;
+    ? redactedAnnotations.map((annotation) => scaleAnnotationCoords(annotation, devicePixelRatio))
+    : redactedAnnotations;
   const padding = normalizeCanvasPadding(options.canvasPadding);
   const extendedWidth = width + padding.left + padding.right;
   const extendedHeight = height + padding.top + padding.bottom;
@@ -874,28 +957,21 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
   // Clamp annotation coordinates to valid bounds
   const { annotations: validAnnotations, warnings: clampWarnings } = clampAnnotations(offsetAnnotations, extendedWidth, extendedHeight);
 
-  // Load config if not provided
-  // Try to load config from the input file's directory first, then fall back to cwd
-  const inputDir = path.dirname(inputPath);
-  const config = options.config || loadConfig(inputDir) || loadConfig();
-  
-  // Get size preset based on image dimensions
-  let sizePreset = config.sizePreset;
-  if (sizePreset === 'auto' || !sizePreset) {
-    sizePreset = getSizePreset(width, height);
-  }
-  
   const baseSizes = SIZE_PRESETS[sizePreset] || SIZE_PRESETS.m;
   const sizes = config.defaultSizes && typeof config.defaultSizes === 'object'
     ? { ...baseSizes, ...config.defaultSizes }
     : baseSizes;
+  const outputFormat = normalizeOutputFormat(outputPath, options.outputFormat);
+  const finalOutputPath = resolveOutputPathForFormat(outputPath, outputFormat);
+  const quality = options.quality ?? getDefaultQuality(outputFormat);
 
   // Apply config to options
   const enhancedOptions = {
     ...options,
     defaultSizes: sizes,
     theme: options.theme || config.theme,
-    customThemes: config.themes
+    customThemes: config.themes,
+    outputFormat
   };
 
   // Detect annotation collisions (AABB overlap warnings)
@@ -905,9 +981,6 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
   // Build SVG overlay
   const svg = buildSvg(extendedWidth, extendedHeight, validAnnotations, enhancedOptions);
   const optimizedSvg = optimizeSvg(svg);
-  const outputFormat = normalizeOutputFormat(outputPath, options.outputFormat);
-  const finalOutputPath = resolveOutputPathForFormat(outputPath, outputFormat);
-  const quality = options.quality ?? getDefaultQuality(outputFormat);
   const altText = generateAltText(validAnnotations, extendedWidth, extendedHeight, enhancedOptions);
 
   // For SVG output: write annotation-only SVG directly, skip sharp compositing
@@ -923,12 +996,13 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
       outputPath: finalOutputPath,
       width: extendedWidth,
       height: extendedHeight,
-      annotationCount: annotations.length,
+      annotationCount: validAnnotations.length,
       warnings,
       sizePreset,
       theme: enhancedOptions.theme,
       devicePixelRatio,
       canvasPadding: padding,
+      format: outputFormat,
       outputFormat,
       quality: undefined,
       altText,
@@ -974,12 +1048,13 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
     outputPath: finalOutputPath,
     width: extendedWidth,
     height: extendedHeight,
-    annotationCount: annotations.length,
+    annotationCount: validAnnotations.length,
     warnings,
     sizePreset,
     theme: enhancedOptions.theme,
     devicePixelRatio,
     canvasPadding: padding,
+    format: outputFormat,
     outputFormat,
     quality,
     altText
@@ -1251,9 +1326,9 @@ function clampAnnotations(annotations, imageWidth, imageHeight) {
 async function main() {
   // CLI argument parsing with minimist
   const args = require('minimist')(process.argv.slice(2), {
-    string: ['annotations', 'theme'],
+    string: ['annotations', 'theme', 'output-format', 'redact-patterns'],
     boolean: ['help', 'h'],
-    alias: { h: 'help' }
+    alias: { h: 'help', a: 'annotations', t: 'theme' }
   });
 
   if (args.help) {
@@ -1261,19 +1336,145 @@ async function main() {
 Image Annotator CLI
 
 Usage: node annotate.js <input> <output> [options]
+       node annotate.js dimensions <image>
+       node annotate.js reannotate --new-screenshot <image> --previous-annotations <json> --previous-width <n> --previous-height <n>
+       node annotate.js step-guide <input> <output> --steps <json>
 
 Options:
-  --annotations, -a  JSON array of annotations (required)
-  --theme, -t        Theme name (documentation|tutorial|bugReport|highlight)
-  --help, -h          Show this help message
-
-Examples:
-  node annotate.js input.png output.png --annotations='[{"type":"marker","x":100,"y":100,"number":1}]'
-  node annotate.js input.png output.png --annotations '[{"type":"arrow","from":[0,0],"to":[100,100]}]' --theme tutorial
+  --annotations, -a       JSON array of annotations (required for annotate mode)
+  --theme, -t             Theme: documentation|tutorial|bugReport|highlight
+  --output-format         Output format: png, jpeg, webp, avif, svg (default: png)
+  --quality               JPEG/WebP quality 1-100
+  --device-pixel-ratio    Scale factor for Retina/HiDPI coordinates (e.g. 2)
+  --canvas-padding        Extra canvas padding in pixels
+  --redact-patterns       JSON array of regex strings to redact annotation text
+  --help, -h              Show this help message
 `);
     process.exit(0);
   }
 
+  const subcommand = args._[0];
+
+  // Route to subcommand handlers (to be implemented in T2/T3)
+  if (subcommand === 'dimensions') {
+    const imagePath = args._[1];
+    if (!imagePath) {
+      console.error('Error: image path required');
+      console.error('Usage: node annotate.js dimensions <image>');
+      process.exit(1);
+    }
+    try {
+      const dims = await getImageDimensions(imagePath);
+      console.log(JSON.stringify(dims, null, 2));
+    } catch (err) {
+      console.error('Error:', err.message);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (subcommand === 'reannotate') {
+    const newScreenshot = args['new-screenshot'];
+    const previousAnnotationsStr = args['previous-annotations'];
+    const previousWidth = args['previous-width'] != null ? Number(args['previous-width']) : null;
+    const previousHeight = args['previous-height'] != null ? Number(args['previous-height']) : null;
+
+    if (!newScreenshot) {
+      console.error('Error: --new-screenshot required');
+      process.exit(1);
+    }
+    const fs = require('fs');
+    if (!fs.existsSync(newScreenshot)) {
+      console.error('Error: File not found: ' + newScreenshot);
+      process.exit(1);
+    }
+    let previousAnnotations;
+    try {
+      previousAnnotations = typeof previousAnnotationsStr === 'string'
+        ? JSON.parse(previousAnnotationsStr)
+        : (previousAnnotationsStr || []);
+    } catch (e) {
+      console.error('Error parsing previous-annotations JSON:', e.message);
+      process.exit(1);
+    }
+    try {
+      const dims = await getImageDimensions(newScreenshot);
+      const newWidth = dims.width;
+      const newHeight = dims.height;
+      const srcWidth = previousWidth || newWidth;
+      const srcHeight = previousHeight || newHeight;
+      const remapped = previousAnnotations.map((ann) => {
+        const scaleX = newWidth / srcWidth;
+        const scaleY = newHeight / srcHeight;
+        const remappedAnn = { ...ann };
+        if (ann.x != null) remappedAnn.x = Math.round(ann.x * scaleX);
+        if (ann.y != null) remappedAnn.y = Math.round(ann.y * scaleY);
+        if (ann.from) remappedAnn.from = [Math.round(ann.from[0] * scaleX), Math.round(ann.from[1] * scaleY)];
+        if (ann.to) remappedAnn.to = [Math.round(ann.to[0] * scaleX), Math.round(ann.to[1] * scaleY)];
+        if (ann.width != null) remappedAnn.width = Math.round(ann.width * scaleX);
+        if (ann.height != null) remappedAnn.height = Math.round(ann.height * scaleY);
+        return remappedAnn;
+      });
+      console.log(JSON.stringify({ remappedAnnotations: remapped, newWidth, newHeight }, null, 2));
+    } catch (err) {
+      console.error('Error:', err.message);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (subcommand === 'step-guide') {
+    const inputPath = args._[1];
+    const outputPath = args._[2];
+    const stepsStr = args.steps;
+
+    if (!inputPath || !outputPath) {
+      console.error('Error: input and output paths required');
+      console.error('Usage: node annotate.js step-guide <input> <output> --steps <json>');
+      process.exit(1);
+    }
+    if (!stepsStr) {
+      console.error('Error: --steps required');
+      process.exit(1);
+    }
+    let steps;
+    try {
+      steps = typeof stepsStr === 'string' ? JSON.parse(stepsStr) : stepsStr;
+    } catch (e) {
+      console.error('Error parsing steps JSON:', e.message);
+      process.exit(1);
+    }
+    const dpr = args['device-pixel-ratio'] != null ? Number(args['device-pixel-ratio']) : 1;
+    const theme = args.theme || null;
+    const outputFormat = args['output-format'] || null;
+    const quality = args.quality != null ? Number(args.quality) : undefined;
+    const colors = ['primary', 'green', 'orange', 'purple', 'cyan'];
+    const annotations = [];
+    steps.forEach((step, i) => {
+      const color = step.color || colors[i % colors.length];
+      annotations.push({ type: 'marker', x: step.x, y: step.y, number: i + 1, color, size: 24 });
+      const labelX = step.x + Math.round(50 * dpr);
+      const labelY = step.y;
+      annotations.push({ type: 'arrow', from: [step.x + Math.round(28 * dpr), step.y], to: [labelX - Math.round(5 * dpr), labelY], color, strokeWidth: 2 });
+      annotations.push({ type: 'label', x: labelX, y: labelY + Math.round(6 * dpr), text: step.label, color: 'darkGray', fontSize: 16, background: 'white', shadow: true });
+      const connectSteps = args['connect-steps'] !== false;
+      if (connectSteps && i < steps.length - 1) {
+        const next = steps[i + 1];
+        annotations.push({ type: 'connector', from: [step.x, step.y + Math.round(30 * dpr)], to: [next.x, next.y - Math.round(30 * dpr)], color: 'gray' });
+      }
+    });
+    try {
+      const result = await annotateImage(inputPath, outputPath, annotations, { theme, outputFormat, quality, devicePixelRatio: dpr });
+      console.log(`✓ Step guide created: ${result.outputPath}`);
+      console.log(`  Steps: ${steps.length}`);
+    } catch (err) {
+      console.error('Error:', err.message);
+      process.exit(1);
+    }
+    return;
+  }
+
+  // Default: positional annotate mode (backward-compatible)
   const inputPath = args._[0];
   const outputPath = args._[1];
 
@@ -1290,8 +1491,8 @@ Examples:
 
   let annotations;
   try {
-    annotations = typeof args.annotations === 'string' 
-      ? JSON.parse(args.annotations) 
+    annotations = typeof args.annotations === 'string'
+      ? JSON.parse(args.annotations)
       : args.annotations;
   } catch (e) {
     console.error('Error parsing annotations JSON:', e.message);
@@ -1299,9 +1500,32 @@ Examples:
   }
 
   const theme = args.theme || null;
+  const outputFormat = args['output-format'] || null;
+  const quality = args.quality != null ? Number(args.quality) : undefined;
+  const devicePixelRatio = args['device-pixel-ratio'] != null ? Number(args['device-pixel-ratio']) : undefined;
+  const canvasPadding = args['canvas-padding'] != null ? Number(args['canvas-padding']) : undefined;
+
+  let redactPatterns;
+  if (args['redact-patterns']) {
+    try {
+      redactPatterns = typeof args['redact-patterns'] === 'string'
+        ? JSON.parse(args['redact-patterns'])
+        : args['redact-patterns'];
+    } catch (e) {
+      console.error('Error parsing redact-patterns JSON:', e.message);
+      process.exit(1);
+    }
+  }
 
   try {
-    const result = await annotateImage(inputPath, outputPath, annotations, { theme });
+    const result = await annotateImage(inputPath, outputPath, annotations, {
+      theme,
+      outputFormat,
+      quality,
+      devicePixelRatio,
+      canvasPadding,
+      redactPatterns
+    });
     console.log(`✓ Annotated image saved: ${result.outputPath}`);
     console.log(`  Dimensions: ${result.width}x${result.height}`);
     console.log(`  Annotations: ${result.annotationCount}`);
@@ -1340,7 +1564,47 @@ function getBoundingBox(annotation, sizePreset) {
       return { x: minX - sw, y: minY - sw, w: (maxX - minX) + sw * 2, h: (maxY - minY) + sw * 2 };
     }
     case 'callout': {
-      return { x: annotation.x - 80, y: annotation.y - 40, w: 160, h: 80 };
+      const fontSize = annotation.fontSize || preset.fontSize || 18;
+      const padding = DEFAULT_PADDING;
+      const pointerSize = 12;
+      const lineHeight = fontSize * LINE_HEIGHT_RATIO;
+      const lines = String(annotation.text || '').split('\n');
+      const contentWidth = Math.max(0, ...lines.map((line) => getTextContentWidthPx(line, fontSize)));
+      const textWidth = (annotation.width || 0) > 0 ? annotation.width : contentWidth + padding * 2;
+      const textHeight = lines.length * lineHeight + padding * 2;
+      const pointer = annotation.pointer || 'bottom';
+      let boxX;
+      let boxY;
+
+      switch (pointer) {
+        case 'top':
+          boxX = annotation.x - textWidth / 2;
+          boxY = annotation.y + pointerSize;
+          break;
+        case 'bottom':
+          boxX = annotation.x - textWidth / 2;
+          boxY = annotation.y - textHeight - pointerSize;
+          break;
+        case 'left':
+          boxX = annotation.x + pointerSize;
+          boxY = annotation.y - textHeight / 2;
+          break;
+        case 'right':
+          boxX = annotation.x - textWidth - pointerSize;
+          boxY = annotation.y - textHeight / 2;
+          break;
+        default:
+          boxX = annotation.x;
+          boxY = annotation.y;
+      }
+
+      const xs = [boxX, boxX + textWidth, annotation.x - pointerSize, annotation.x + pointerSize];
+      const ys = [boxY, boxY + textHeight, annotation.y - pointerSize, annotation.y + pointerSize];
+      const minX = Math.min(...xs);
+      const minY = Math.min(...ys);
+      const maxX = Math.max(...xs);
+      const maxY = Math.max(...ys);
+      return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
     }
     case 'rect':
     case 'highlight': {
@@ -1351,7 +1615,26 @@ function getBoundingBox(annotation, sizePreset) {
       return { x: annotation.x - r, y: annotation.y - r, w: r * 2, h: r * 2 };
     }
     case 'label': {
-      return { x: annotation.x, y: annotation.y - 15, w: 100, h: 30 };
+      const fontSize = annotation.fontSize || preset.fontSize || 18;
+      const padding = annotation.padding || 10;
+      const lines = String(annotation.text || '').split('\n');
+      const lineHeight = fontSize * 1.3;
+      const textWidth = Math.max(0, ...lines.map((line) => getTextContentWidthPx(line, fontSize)));
+      const textHeight = lines.length * lineHeight;
+      if (annotation.background) {
+        return {
+          x: annotation.x - padding,
+          y: annotation.y - textHeight - padding + 4,
+          w: textWidth + padding * 2,
+          h: textHeight + padding * 2
+        };
+      }
+      return {
+        x: annotation.x,
+        y: annotation.y - textHeight,
+        w: textWidth,
+        h: textHeight + fontSize * 0.2
+      };
     }
     case 'blur': {
       return { x: annotation.x, y: annotation.y, w: annotation.width || 100, h: annotation.height || 60 };
@@ -1410,12 +1693,44 @@ function detectCollisions(annotations, sizePreset) {
   return warnings;
 }
 
+function getAnnotationAriaLabel(annotation, index) {
+  const position = annotation.from && annotation.to
+    ? `from ${annotation.from[0]},${annotation.from[1]} to ${annotation.to[0]},${annotation.to[1]}`
+    : typeof annotation.x === 'number' && typeof annotation.y === 'number'
+      ? `at ${annotation.x},${annotation.y}`
+      : 'with no position';
+
+  switch (annotation.type) {
+    case 'marker':
+      return `Marker ${annotation.number || index + 1} ${position}`;
+    case 'callout':
+      return `Callout${annotation.text ? ` \"${annotation.text}\"` : ''} ${position}`;
+    case 'label':
+      return `Label${annotation.text ? ` \"${annotation.text}\"` : ''} ${position}`;
+    case 'arrow':
+    case 'curved-arrow':
+      return `${annotation.type} ${position}`;
+    case 'rect':
+    case 'highlight':
+    case 'blur':
+      return `${annotation.type} region ${position}`;
+    case 'circle':
+      return `Circle ${position}`;
+    case 'connector':
+      return `Connector ${position}`;
+    case 'icon':
+      return `Icon ${annotation.icon || 'badge'} ${position}`;
+    default:
+      return `${annotation.type || 'annotation'} ${position}`;
+  }
+}
+
 /**
  * Inject ARIA semantics into SVG output for accessibility
  * Adds role="img", aria-labelledby, <title>, and <desc> elements
  * @param {string} svgString - The SVG content as a string
  * @param {string} altText - The alt text for the image
- * @param {Array} annotations - The annotations array (for reference, not used in current implementation)
+ * @param {Array} annotations - The annotations array used for per-annotation aria-labels
  * @returns {string} SVG with injected A11y semantics
  */
 function injectA11y(svgString, altText, annotations = []) {
@@ -1447,6 +1762,14 @@ function injectA11y(svgString, altText, annotations = []) {
       `$1<title id="svg-title">${escapeXml(titleText)}</title><desc id="svg-desc">${escapeXml(descText)}</desc>`
     );
   }
+
+  result = result.replace(/<g data-annotation-index="(\d+)">/g, (match, index) => {
+    const annotation = annotations[Number(index)];
+    if (!annotation) {
+      return '<g>';
+    }
+    return `<g aria-label="${escapeXml(getAnnotationAriaLabel(annotation, Number(index)))}">`;
+  });
 
   return result;
 }
@@ -1481,8 +1804,11 @@ module.exports = {
   // Collision detection
   getBoundingBox,
   detectCollisions,
+  getAnnotationAriaLabel,
   // A11y
-  injectA11y
+  injectA11y,
+  // Privacy redaction
+  applyRedactPatterns
 };
 
 // Validation functions
