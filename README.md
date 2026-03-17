@@ -6,10 +6,11 @@ Professional MCP server for annotating screenshots with markers, arrows, callout
 
 ## Features
 
+- **Hybrid Distribution**: Available as an MCP server, a standalone CLI tool, and a portable Skills package for coding agents
 - **Multiple Annotation Types**: Markers, arrows, callouts, rectangles, circles, labels, highlights, blur, connectors, and icons
 - **Professional Styling**: Gradient markers with shadows, customizable colors and themes
 - **Theme Support**: Pre-built themes for documentation, tutorials, bug reports, and highlights
-- **6 MCP Tools**: Different tools for different use cases
+- **5 MCP Tools**: Annotation, dimensions, step guides, reannotation help, and config UI
 
 ## Installation
 
@@ -58,13 +59,28 @@ npm install
     }
   }
 }
+```
 
 > Note: For Windows, use forward slashes in path or use environment variable `%CD%` in args.
+
+### Option 4: Skills Package (for coding agents)
+
+Copy `skills/image-annotator/` to your agent's skills directory. See `skills/image-annotator/references/portability.md` for details.
+
+## Hybrid Distribution
+
+This project is distributed in three complementary formats:
+
+- **MCP Server**: Standard Model Context Protocol implementation for Claude Desktop and other MCP-enabled clients.
+- **CLI Tool**: Direct command-line access for automation scripts, CI/CD pipelines, and manual use.
+- **Skills Package**: A portable guidance and reference package designed for coding agents to understand and use the toolset in any environment.
 
 ## MCP Tools
 
 ### `annotate_screenshot`
 Add multiple annotations to a screenshot image.
+
+Supports raster output (`png`, `jpeg`, `webp`, `avif`) plus annotation-layer `svg` output. Also supports `redact_patterns` for regex-based redaction of annotation text (labels/callouts only; no OCR).
 
 **Annotation Types:**
 - `marker` - Numbered circles (1, 2, 3...) with gradient and shadow
@@ -89,17 +105,11 @@ Get width, height, and format of an image. Essential for calculating annotation 
 ### `create_step_guide`
 Create a numbered step-by-step guide on a screenshot. Automatically places numbered markers with labels and connecting arrows.
 
-### `highlight_area`
-Quickly highlight a specific area with a shape (circle, rect, highlight) and optional label.
-
-### `add_callout`
-Add a callout (speech bubble) pointing to a specific location.
-
-### `blur_area`
-Blur a rectangular area to hide sensitive information.
+### `reannotate_screenshot`
+Proportionally remap an existing annotation set onto a new screenshot size. This is a helper for resized screenshots, not visual matching.
 
 ### `open_config_ui`
-Open browser-based configuration UI to customize annotation presets. The config file will be saved to the current working directory.
+Open browser-based configuration UI to customize annotation presets. Pass `working_directory` to save `.image-annotator.json` into a specific project; otherwise it defaults to the MCP server directory.
 
 ## Size Presets
 
@@ -142,7 +152,7 @@ Use the `open_config_ui` tool to open a visual configuration interface in your b
 - Customize colors and sizes
 - Live preview
 
-The config file will be saved to your current working directory.
+The config file is saved to the `working_directory` you pass to `open_config_ui`. If omitted, it defaults to the MCP server directory.
 
 ## Professional Fonts
 
@@ -209,12 +219,55 @@ Upload annotated image to Basecamp: `basecamp_comment_with_file`
 
 ## CLI Usage
 
-```bash
-# Annotate an image
-node annotate.js input.png output.png --annotations '[{"type":"marker","x":100,"y":100,"number":1}]'
+The CLI supports several modes for different annotation tasks.
 
-# Get image dimensions
-node annotate.js --dimensions input.png
+### Annotate Image
+Add multiple annotations to an image.
+```bash
+node annotate.js input.png output.png --annotations '[{"type":"marker","x":100,"y":100,"number":1}]'
+```
+
+**Advanced Options:**
+```bash
+node annotate.js input.png output.webp \
+  --annotations '[...]' \
+  --output-format webp \
+  --quality 80 \
+  --device-pixel-ratio 2 \
+  --theme documentation
+```
+
+### Get Dimensions
+Get width, height, and format of an image.
+```bash
+node annotate.js dimensions input.png
+```
+
+### Reannotate
+Proportionally remap annotations onto a new screenshot size.
+```bash
+node annotate.js reannotate \
+  --new-screenshot new.png \
+  --previous-annotations '[...]' \
+  --previous-width 1280 \
+  --previous-height 720
+```
+
+### Step Guide
+Create a numbered step-by-step guide.
+```bash
+node annotate.js step-guide input.png output.png \
+  --steps '[{"x":100,"y":200,"label":"Click here"}]'
+```
+
+### Configuration UI
+Launch the browser-based configuration interface.
+```bash
+# Standalone launch
+node config-ui/launch.js --working-directory /path/to/project
+
+# Via npm script
+npm run config-ui
 ```
 
 ## License
