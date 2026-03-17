@@ -113,6 +113,11 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
           enum: ['documentation', 'tutorial', 'bugReport', 'highlight'],
           description: 'Apply a preset theme for consistent styling'
         },
+        redact_patterns: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Array of regex pattern strings. Any label or callout annotation whose text matches at least one pattern will have a blur annotation automatically appended over its bounding box. Matching is performed against annotation text only — no OCR or image scanning is performed.'
+        },
         annotations: {
           type: 'array',
           description: 'Array of annotation objects',
@@ -174,7 +179,7 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
 Automatically places numbered markers with labels and connecting arrows.
 Perfect for tutorials and documentation.
 
-Known limitation: device_pixel_ratio scales the source step coordinates, but the built-in label offsets in this helper still use fixed pixel distances. For full DPR-aware layout control, use annotate_screenshot directly.`,
+device_pixel_ratio scales both the source step coordinates and the built-in label spacing so guides stay visually proportional on high-DPR screenshots. For full layout control, use annotate_screenshot directly.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -249,6 +254,48 @@ Known limitation: device_pixel_ratio scales the source step coordinates, but the
     }
   },
   {
+    name: 'reannotate_screenshot',
+    description: `Proportionally remap annotation coordinates from a previous screenshot onto a new screenshot of a different size.
+
+This is a coordinate estimation helper only — it does NOT perform visual feature matching, OCR, or browser automation. Coordinates are scaled by the ratio of new dimensions to previous dimensions.
+
+Use this when:
+• A UI was resized or the viewport changed and you want to reuse existing annotations
+• You need a starting point for re-annotating a resized screenshot
+
+Always verify the suggested annotations visually before publishing, as layout changes may have moved UI elements.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        new_screenshot_path: {
+          type: 'string',
+          description: 'Absolute path to the new screenshot whose dimensions will be used for remapping'
+        },
+        previous_annotations: {
+          type: 'array',
+          description: 'Annotation objects from the previous screenshot (same format as annotate_screenshot)',
+          items: {
+            type: 'object',
+            properties: {
+              type: { type: 'string' }
+            },
+            required: ['type']
+          }
+        },
+        previous_image_dimensions: {
+          type: 'object',
+          description: 'Explicit dimensions of the previous screenshot. Provide this for accurate remapping. If omitted, dimensions are estimated from annotation coordinates.',
+          properties: {
+            width: { type: 'number', minimum: 1 },
+            height: { type: 'number', minimum: 1 }
+          },
+          required: ['width', 'height']
+        }
+      },
+      required: ['new_screenshot_path', 'previous_annotations']
+    }
+  },
+  {
     name: 'open_config_ui',
     description: `Open the annotation config UI in the browser. Call with no arguments to open immediately.
 
@@ -302,6 +349,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleStepGuide(args);
       case 'open_config_ui':
         return await handleOpenConfigUi(args);
+      case 'reannotate_screenshot':
+        return await handleReannotate(args);
       default:
         return {
           content: [{ type: 'text', text: `Tool '${name}' is not available. If you were using highlight_area, add_callout, or blur_area, use annotate_screenshot with equivalent annotation types instead.\n\nExamples:\n• Blur: {"type":"blur","x":100,"y":100,"width":200,"height":50}\n• Highlight: {"type":"highlight","x":50,"y":50,"width":300,"height":100,"color":"yellow","opacity":0.35}\n• Callout: {"type":"callout","x":200,"y":200,"text":"Your note here","pointer":"bottom"}` }],
@@ -354,7 +403,7 @@ function getOutputPath(inputPath, suffix = '-annotated', outputFormat = null) {
 
 // Handlers
 async function handleAnnotate(args) {
-  const { input_path, output_path, annotations, theme, output_format, quality, device_pixel_ratio, canvas_padding } = args;
+  const { input_path, output_path, annotations, theme, output_format, quality, device_pixel_ratio, canvas_padding, redact_patterns } = args;
 
   if (!fs.existsSync(input_path)) {
     throw new FileNotFoundError(input_path);
@@ -366,7 +415,8 @@ async function handleAnnotate(args) {
     outputFormat: output_format,
     quality,
     devicePixelRatio: device_pixel_ratio,
-    canvasPadding: canvas_padding
+    canvasPadding: canvas_padding,
+    redactPatterns: redact_patterns
   });
   const warningLines = result.warnings && result.warnings.length
     ? result.warnings.map((warning) => {
@@ -485,6 +535,144 @@ async function handleStepGuide(args) {
   };
 }
 
+/**
+ * Estimate the bounding dimensions of a set of annotations by scanning all
+ * coordinate fields. Returns { width, height } or null when no coordinates
+ * are found.
+ *
+ * @param {Array<object>} annotations
+ * @returns {{ width: number, height: number } | null}
+ */
+function estimateDimensionsFromAnnotations(annotations) {
+  let maxX = 0;
+  let maxY = 0;
+  let found = false;
+
+  for (const ann of annotations) {
+    const consider = (x, y) => {
+      if (typeof x === 'number' && isFinite(x) && x > maxX) { maxX = x; found = true; }
+      if (typeof y === 'number' && isFinite(y) && y > maxY) { maxY = y; found = true; }
+    };
+
+    consider(ann.x, ann.y);
+
+    if (Array.isArray(ann.from) && ann.from.length >= 2) consider(ann.from[0], ann.from[1]);
+    if (Array.isArray(ann.to) && ann.to.length >= 2) consider(ann.to[0], ann.to[1]);
+
+    if (typeof ann.width === 'number' && isFinite(ann.width)) {
+      const right = (ann.x || 0) + ann.width;
+      if (right > maxX) { maxX = right; found = true; }
+    }
+    if (typeof ann.height === 'number' && isFinite(ann.height)) {
+      const bottom = (ann.y || 0) + ann.height;
+      if (bottom > maxY) { maxY = bottom; found = true; }
+    }
+    if (typeof ann.radius === 'number' && isFinite(ann.radius)) {
+      const rx = (ann.x || 0) + ann.radius;
+      const ry = (ann.y || 0) + ann.radius;
+      if (rx > maxX) { maxX = rx; found = true; }
+      if (ry > maxY) { maxY = ry; found = true; }
+    }
+  }
+
+  if (!found || maxX === 0 || maxY === 0) return null;
+  return { width: maxX, height: maxY };
+}
+
+/**
+ * Remap a single annotation's coordinate fields proportionally.
+ *
+ * @param {object} ann  Original annotation
+ * @param {number} sx   Scale factor for X axis
+ * @param {number} sy   Scale factor for Y axis
+ * @returns {object}    New annotation with scaled coordinates
+ */
+function remapAnnotation(ann, sx, sy) {
+  const scaled = Object.assign({}, ann);
+
+  const scaleNum = (v, s) => (typeof v === 'number' && isFinite(v)) ? Math.round(v * s) : v;
+  const scalePoint = (pt, sx2, sy2) => Array.isArray(pt) && pt.length >= 2
+    ? [Math.round(pt[0] * sx2), Math.round(pt[1] * sy2)]
+    : pt;
+
+  if (typeof scaled.x === 'number') scaled.x = scaleNum(scaled.x, sx);
+  if (typeof scaled.y === 'number') scaled.y = scaleNum(scaled.y, sy);
+  if (typeof scaled.width === 'number') scaled.width = scaleNum(scaled.width, sx);
+  if (typeof scaled.height === 'number') scaled.height = scaleNum(scaled.height, sy);
+  if (typeof scaled.radius === 'number') scaled.radius = scaleNum(scaled.radius, Math.min(sx, sy));
+  if (scaled.from) scaled.from = scalePoint(scaled.from, sx, sy);
+  if (scaled.to) scaled.to = scalePoint(scaled.to, sx, sy);
+
+  // Fields intentionally NOT scaled: type, number, text, color, background,
+  // style, pointer, icon, shadow, opacity, fontSize, strokeWidth, size,
+  // cornerRadius, curve, theme
+  return scaled;
+}
+
+async function handleReannotate(args) {
+  const { new_screenshot_path, previous_annotations, previous_image_dimensions } = args;
+
+  if (!fs.existsSync(new_screenshot_path)) {
+    throw new FileNotFoundError(new_screenshot_path);
+  }
+
+  if (!Array.isArray(previous_annotations)) {
+    throw new InvalidParameterError('previous_annotations', 'must be an array');
+  }
+
+  // Resolve new dimensions
+  const newDims = await getImageDimensions(new_screenshot_path);
+  const newWidth = newDims.width;
+  const newHeight = newDims.height;
+
+  // Resolve previous dimensions
+  let prevWidth, prevHeight;
+  const pd = previous_image_dimensions;
+  if (pd && typeof pd.width === 'number' && pd.width > 0 &&
+      typeof pd.height === 'number' && pd.height > 0) {
+    prevWidth = pd.width;
+    prevHeight = pd.height;
+  } else {
+    const estimated = estimateDimensionsFromAnnotations(previous_annotations);
+    if (!estimated) {
+      throw new InvalidParameterError(
+        'previous_image_dimensions',
+        'Could not estimate previous image dimensions from annotations. ' +
+        'Please provide previous_image_dimensions explicitly.'
+      );
+    }
+    prevWidth = estimated.width;
+    prevHeight = estimated.height;
+  }
+
+  const scaleX = newWidth / prevWidth;
+  const scaleY = newHeight / prevHeight;
+
+  const suggested_annotations = previous_annotations.map((ann) => remapAnnotation(ann, scaleX, scaleY));
+
+  const result = {
+    suggested_annotations,
+    dimension_change: {
+      from: { w: prevWidth, h: prevHeight },
+      to: { w: newWidth, h: newHeight },
+      scaleX: Math.round(scaleX * 10000) / 10000,
+      scaleY: Math.round(scaleY * 10000) / 10000
+    },
+    warning: 'These coordinates are proportional estimates only — not visual matches. ' +
+      'UI elements may have moved, reflowed, or changed size independently of the viewport. ' +
+      'Always verify the suggested annotations visually before publishing.',
+    next_step: 'Pass suggested_annotations to annotate_screenshot with new_screenshot_path as input_path to preview the result.'
+  };
+
+  return {
+    structuredContent: result,
+    content: [{
+      type: 'text',
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
 // Track config server child process for cleanup
 let configServerProcess = null;
 
@@ -507,53 +695,25 @@ function openBrowser(url) {
   }
 }
 
+const launchConfigUI = require('./config-ui/launch');
+
 // Start config UI server (optional workingDir = where to save .image-annotator.json)
-function startConfigServer(workingDir) {
-  const { spawn } = require('child_process');
-  
+async function startConfigServer(workingDir) {
   // Kill previous config server if still running
   if (configServerProcess) {
     try { configServerProcess.kill(); } catch (e) { /* ignore */ }
     configServerProcess = null;
   }
-  
-  const cwd = workingDir && path.isAbsolute(workingDir) ? workingDir : process.cwd();
-  const configServer = spawn('node', [path.join(__dirname, 'config-ui', 'server.js')], {
-    cwd,
-    stdio: 'pipe'
+
+  const { url, process: child } = await launchConfigUI(workingDir);
+  configServerProcess = child;
+
+  child.on('exit', () => {
+    configServerProcess = null;
   });
-  configServerProcess = configServer;
-  
-  return new Promise((resolve, reject) => {
-    let resolved = false;
-    
-    configServer.stdout.on('data', (data) => {
-      const output = data.toString();
-      const urlMatch = output.match(/http:\/\/localhost:(\d+)/);
-      if (urlMatch && !resolved) {
-        resolved = true;
-        const url = urlMatch[0];
-        openBrowser(url);
-        resolve(url);
-      }
-    });
-    
-    configServer.stderr.on('data', (data) => {
-      console.error('Config server error:', data.toString());
-    });
-    
-    configServer.on('exit', () => {
-      configServerProcess = null;
-    });
-    
-    // Fallback after 3 seconds
-    setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        resolve('http://localhost:3456');
-      }
-    }, 3000);
-  });
+
+  openBrowser(url);
+  return url;
 }
 
 // Clean up config server on process exit
@@ -602,6 +762,9 @@ module.exports = {
   handleDimensions,
   handleStepGuide,
   handleOpenConfigUi,
+  handleReannotate,
+  estimateDimensionsFromAnnotations,
+  remapAnnotation,
   main,
   server
 };
