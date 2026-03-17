@@ -116,7 +116,8 @@ const OUTPUT_FORMAT_EXTENSIONS = {
   png: '.png',
   jpeg: '.jpg',
   webp: '.webp',
-  avif: '.avif'
+  avif: '.avif',
+  svg: '.svg'
 };
 
 const SVGO_CONFIG = {
@@ -905,6 +906,31 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
   const quality = options.quality ?? getDefaultQuality(outputFormat);
   const altText = generateAltText(validAnnotations, extendedWidth, extendedHeight, enhancedOptions);
 
+  // For SVG output: write annotation-only SVG directly, skip sharp compositing
+  if (outputFormat === 'svg') {
+    try {
+      fs.writeFileSync(finalOutputPath, optimizedSvg);
+    } catch (err) {
+      throw new ImageProcessingError(`Failed to write SVG output: ${err.message}`, err);
+    }
+
+    return {
+      outputPath: finalOutputPath,
+      width: extendedWidth,
+      height: extendedHeight,
+      annotationCount: annotations.length,
+      warnings,
+      sizePreset,
+      theme: enhancedOptions.theme,
+      devicePixelRatio,
+      canvasPadding: padding,
+      outputFormat,
+      quality: undefined,
+      altText,
+      size: optimizedSvg.length
+    };
+  }
+
   // Composite SVG onto image
   try {
     let pipeline = sharp(inputPath);
@@ -1003,6 +1029,7 @@ function normalizeOutputFormat(outputPath, requestedFormat) {
   if (extension === '.jpg' || extension === '.jpeg') return 'jpeg';
   if (extension === '.webp') return 'webp';
   if (extension === '.avif') return 'avif';
+  if (extension === '.svg') return 'svg';
   return 'png';
 }
 

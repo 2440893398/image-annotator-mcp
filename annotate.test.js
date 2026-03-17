@@ -351,6 +351,15 @@ describe('annotate.js', () => {
       expect(getDefaultQuality('png')).toBeUndefined();
     });
 
+    it('detects svg format from .svg extension', () => {
+      expect(normalizeOutputFormat('output.svg', null)).toBe('svg');
+    });
+
+    it('rewrites extension to .svg when format is svg', () => {
+      expect(resolveOutputPathForFormat('result.png', 'svg')).toBe('result.svg');
+      expect(resolveOutputPathForFormat('result', 'svg')).toBe('result.svg');
+    });
+
     it('writes explicit webp output with corrected extension', async () => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'annotate-webp-'));
       const inputPath = path.join(tempDir, 'input.png');
@@ -459,6 +468,50 @@ describe('annotate.js', () => {
     it('returns a generic description for empty annotations', () => {
       expect(generateAltText([], 1920, 1080)).toBe('Image (1920x1080) with no annotations');
     });
+  });
+
+  describe('svg output format', () => {
+    async function createTempPng(dir, name = 'input.png') {
+      const sharp = require('sharp');
+      const filePath = path.join(dir, name);
+      await sharp({
+        create: { width: 100, height: 100, channels: 4, background: { r: 200, g: 200, b: 200, alpha: 1 } }
+      }).png().toFile(filePath);
+      return filePath;
+    }
+
+    it('produces a valid SVG file without requiring sharp compositing', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'annotate-svg-'));
+      const inputPath = await createTempPng(tempDir);
+      const outputPath = path.join(tempDir, 'output.svg');
+
+      const result = await annotateImage(inputPath, outputPath, [
+        { type: 'marker', x: 50, y: 50, number: 1 },
+        { type: 'label', x: 10, y: 10, text: 'SVG test' }
+      ], { outputFormat: 'svg' });
+
+      expect(result.outputFormat).toBe('svg');
+      expect(result.outputPath.endsWith('.svg')).toBe(true);
+      expect(fs.existsSync(result.outputPath)).toBe(true);
+
+      const content = fs.readFileSync(result.outputPath, 'utf8');
+      expect(content).toContain('<svg');
+      expect(content).toContain('xmlns="http://www.w3.org/2000/svg"');
+      expect(result.size).toBeGreaterThan(0);
+    }, 15000);
+
+    it('auto-corrects extension to .svg when output_format is svg', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'annotate-svg-ext-'));
+      const inputPath = await createTempPng(tempDir);
+      const outputPath = path.join(tempDir, 'output.png');
+
+      const result = await annotateImage(inputPath, outputPath, [
+        { type: 'marker', x: 50, y: 50, number: 1 }
+      ], { outputFormat: 'svg' });
+
+      expect(result.outputPath.endsWith('.svg')).toBe(true);
+      expect(fs.existsSync(result.outputPath)).toBe(true);
+    }, 15000);
   });
 
   describe('integration', () => {

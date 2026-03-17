@@ -80,8 +80,8 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
         },
         output_format: {
           type: 'string',
-          enum: ['png', 'jpeg', 'webp', 'avif'],
-          description: 'Output image format. Defaults to inferring from output_path or falling back to png when no file extension is provided.'
+          enum: ['png', 'jpeg', 'webp', 'avif', 'svg'],
+          description: 'Output image format. Defaults to inferring from output_path or falling back to png when no file extension is provided. Use svg to produce an annotation-only SVG layer without compositing the source image.'
         },
         canvas_padding: {
           description: 'Optional padding that extends the output canvas before rendering annotations. Use a single number to add the same padding on every side, or provide top/right/bottom/left values to grow each edge independently. Annotation coordinates are automatically offset to stay aligned with the original screenshot.',
@@ -194,8 +194,8 @@ Known limitation: device_pixel_ratio scales the source step coordinates, but the
         },
         output_format: {
           type: 'string',
-          enum: ['png', 'jpeg', 'webp', 'avif'],
-          description: 'Output image format. Defaults to inferring from output_path or falling back to png when no file extension is provided.'
+          enum: ['png', 'jpeg', 'webp', 'avif', 'svg'],
+          description: 'Output image format. Defaults to inferring from output_path or falling back to png when no file extension is provided. Use svg to produce an annotation-only SVG layer without compositing the source image.'
         },
         canvas_padding: {
           description: 'Optional padding that extends the output canvas before placing the generated guide. Use a single number for uniform padding on all sides, or provide top/right/bottom/left values to expand each edge separately. Step and label coordinates are automatically offset so they still point to the intended UI elements.',
