@@ -1,15 +1,17 @@
 {
   "name": "image-annotator-mcp",
   "version": "1.0.0",
-  "description": "Professional MCP server for annotating screenshots with markers, arrows, callouts, and more. Works seamlessly with Playwright MCP for documentation workflows.",
+  "description": "Hybrid MCP server + CLI + Skills for annotating screenshots with markers, arrows, callouts, and more. Works with Claude Desktop, coding agents, and Playwright MCP.",
   "main": "server.js",
   "bin": {
     "image-annotator": "./server.js",
-    "annotate": "./annotate.js"
+    "annotate": "./annotate.js",
+    "image-annotator-config-ui": "./config-ui/launch.js"
   },
   "scripts": {
     "start": "node server.js",
     "cli": "node annotate.js",
+    "config-ui": "node config-ui/launch.js",
     "test": "jest",
     "test:watch": "jest --watch"
   },
@@ -25,7 +27,10 @@
     "arrow",
     "callout",
     "highlight",
-    "tutorial"
+    "tutorial",
+    "cli",
+    "skills",
+    "hybrid"
   ],
   "author": "Varun Dubey <varun@wbcomdesigns.com>",
   "license": "MIT",
