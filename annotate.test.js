@@ -23,7 +23,9 @@ const {
   validateAnnotation,
   validateAnnotations,
   validateImagePath,
-  ValidationError
+  ValidationError,
+  getBoundingBox,
+  detectCollisions
 } = require('./annotate');
 
 describe('annotate.js', () => {
@@ -539,6 +541,250 @@ describe('annotate.js', () => {
       expect(metadata.format).toBe('webp');
       expect(metadata.width).toBe(200);
       expect(metadata.height).toBe(200);
+    }, 15000);
+  });
+
+  describe('getBoundingBox', () => {
+    it('should return bounding box for marker using sizePreset markerSize', () => {
+      const ann = { type: 'marker', x: 100, y: 100 };
+      const bb = getBoundingBox(ann, 'm');
+      // m preset: markerSize=32, r=16
+      expect(bb).toEqual({ x: 84, y: 84, w: 32, h: 32 });
+    });
+
+    it('should return bounding box for marker with xs preset', () => {
+      const ann = { type: 'marker', x: 50, y: 50 };
+      const bb = getBoundingBox(ann, 'xs');
+      // xs preset: markerSize=20, r=10
+      expect(bb).toEqual({ x: 40, y: 40, w: 20, h: 20 });
+    });
+
+    it('should return bounding box for arrow using from/to endpoints', () => {
+      const ann = { type: 'arrow', from: [10, 20], to: [100, 80], strokeWidth: 4 };
+      const bb = getBoundingBox(ann, 'm');
+      expect(bb.x).toBe(10 - 4);
+      expect(bb.y).toBe(20 - 4);
+      expect(bb.w).toBe((100 - 10) + 4 * 2);
+      expect(bb.h).toBe((80 - 20) + 4 * 2);
+    });
+
+    it('should return bounding box for curved-arrow using from/to endpoints', () => {
+      const ann = { type: 'curved-arrow', from: [0, 0], to: [200, 100] };
+      const bb = getBoundingBox(ann, 'm');
+      // default strokeWidth=5
+      expect(bb.x).toBe(0 - 5);
+      expect(bb.y).toBe(0 - 5);
+      expect(bb.w).toBe(200 + 5 * 2);
+      expect(bb.h).toBe(100 + 5 * 2);
+    });
+
+    it('should return bounding box for callout', () => {
+      const ann = { type: 'callout', x: 200, y: 150 };
+      const bb = getBoundingBox(ann, 'm');
+      expect(bb).toEqual({ x: 120, y: 110, w: 160, h: 80 });
+    });
+
+    it('should return bounding box for rect', () => {
+      const ann = { type: 'rect', x: 10, y: 20, width: 150, height: 80 };
+      const bb = getBoundingBox(ann, 'm');
+      expect(bb).toEqual({ x: 10, y: 20, w: 150, h: 80 });
+    });
+
+    it('should return bounding box for rect with defaults when width/height missing', () => {
+      const ann = { type: 'rect', x: 10, y: 20 };
+      const bb = getBoundingBox(ann, 'm');
+      expect(bb).toEqual({ x: 10, y: 20, w: 100, h: 60 });
+    });
+
+    it('should return bounding box for highlight', () => {
+      const ann = { type: 'highlight', x: 5, y: 10, width: 200, height: 50 };
+      const bb = getBoundingBox(ann, 'm');
+      expect(bb).toEqual({ x: 5, y: 10, w: 200, h: 50 });
+    });
+
+    it('should return bounding box for circle', () => {
+      const ann = { type: 'circle', x: 100, y: 100, radius: 40 };
+      const bb = getBoundingBox(ann, 'm');
+      expect(bb).toEqual({ x: 60, y: 60, w: 80, h: 80 });
+    });
+
+    it('should return bounding box for circle with default radius', () => {
+      const ann = { type: 'circle', x: 100, y: 100 };
+      const bb = getBoundingBox(ann, 'm');
+      expect(bb).toEqual({ x: 70, y: 70, w: 60, h: 60 });
+    });
+
+    it('should return bounding box for label', () => {
+      const ann = { type: 'label', x: 50, y: 80, text: 'Hello' };
+      const bb = getBoundingBox(ann, 'm');
+      expect(bb).toEqual({ x: 50, y: 65, w: 100, h: 30 });
+    });
+
+    it('should return bounding box for blur', () => {
+      const ann = { type: 'blur', x: 30, y: 40, width: 120, height: 70 };
+      const bb = getBoundingBox(ann, 'm');
+      expect(bb).toEqual({ x: 30, y: 40, w: 120, h: 70 });
+    });
+
+    it('should return bounding box for connector', () => {
+      const ann = { type: 'connector', from: [10, 20], to: [100, 80] };
+      const bb = getBoundingBox(ann, 'm');
+      // default strokeWidth=5
+      expect(bb.x).toBe(10 - 5);
+      expect(bb.y).toBe(20 - 5);
+      expect(bb.w).toBe((100 - 10) + 5 * 2);
+      expect(bb.h).toBe((80 - 20) + 5 * 2);
+    });
+
+    it('should return bounding box for icon', () => {
+      const ann = { type: 'icon', x: 100, y: 100, icon: 'check' };
+      const bb = getBoundingBox(ann, 'm');
+      expect(bb).toEqual({ x: 84, y: 84, w: 32, h: 32 });
+    });
+
+    it('should return null for unknown annotation type', () => {
+      const ann = { type: 'unknown-type', x: 50, y: 50 };
+      const bb = getBoundingBox(ann, 'm');
+      expect(bb).toBeNull();
+    });
+
+    it('should default to m preset when sizePreset is invalid', () => {
+      const ann = { type: 'marker', x: 100, y: 100 };
+      const bb = getBoundingBox(ann, 'invalid');
+      // falls back to m: markerSize=32, r=16
+      expect(bb).toEqual({ x: 84, y: 84, w: 32, h: 32 });
+    });
+  });
+
+  describe('detectCollisions', () => {
+    it('should return empty array for empty annotations', () => {
+      expect(detectCollisions([], 'm')).toEqual([]);
+    });
+
+    it('should return empty array for single annotation', () => {
+      const annotations = [{ type: 'marker', x: 100, y: 100 }];
+      expect(detectCollisions(annotations, 'm')).toEqual([]);
+    });
+
+    it('should detect collision between two overlapping markers', () => {
+      // m preset: markerSize=32, r=16
+      // marker at (100,100): bb = {x:84, y:84, w:32, h:32}
+      // marker at (110,110): bb = {x:94, y:94, w:32, h:32}
+      // overlap: x=94..116 ∩ 84..116 → x=94, w=22; y=94..126 ∩ 84..116 → y=94, h=22
+      const annotations = [
+        { type: 'marker', x: 100, y: 100 },
+        { type: 'marker', x: 110, y: 110 }
+      ];
+      const warnings = detectCollisions(annotations, 'm');
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0].type).toBe('overlap');
+      expect(warnings[0].annotations).toEqual([0, 1]);
+      expect(warnings[0].overlap).toHaveProperty('x');
+      expect(warnings[0].overlap).toHaveProperty('y');
+      expect(warnings[0].overlap).toHaveProperty('w');
+      expect(warnings[0].overlap).toHaveProperty('h');
+      expect(warnings[0].overlap.w).toBeGreaterThan(0);
+      expect(warnings[0].overlap.h).toBeGreaterThan(0);
+    });
+
+    it('should return 0 warnings for non-overlapping markers', () => {
+      // m preset: markerSize=32, r=16
+      // marker at (100,100): bb = {x:84, y:84, w:32, h:32} → right edge at 116
+      // marker at (200,200): bb = {x:184, y:184, w:32, h:32} → no overlap
+      const annotations = [
+        { type: 'marker', x: 100, y: 100 },
+        { type: 'marker', x: 200, y: 200 }
+      ];
+      const warnings = detectCollisions(annotations, 'm');
+      expect(warnings).toHaveLength(0);
+    });
+
+    it('should detect multiple collisions among 3 overlapping annotations', () => {
+      const annotations = [
+        { type: 'marker', x: 100, y: 100 },
+        { type: 'marker', x: 105, y: 105 },
+        { type: 'marker', x: 108, y: 108 }
+      ];
+      const warnings = detectCollisions(annotations, 'm');
+      // All 3 pairs overlap
+      expect(warnings.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('should skip annotations with null bounding boxes', () => {
+      const annotations = [
+        { type: 'marker', x: 100, y: 100 },
+        { type: 'unknown-type', x: 100, y: 100 }
+      ];
+      const warnings = detectCollisions(annotations, 'm');
+      expect(warnings).toHaveLength(0);
+    });
+
+    it('should return warning with correct overlap format', () => {
+      const annotations = [
+        { type: 'rect', x: 0, y: 0, width: 100, height: 100 },
+        { type: 'rect', x: 50, y: 50, width: 100, height: 100 }
+      ];
+      const warnings = detectCollisions(annotations, 'm');
+      expect(warnings).toHaveLength(1);
+      const w = warnings[0];
+      expect(w.type).toBe('overlap');
+      expect(w.annotations).toEqual([0, 1]);
+      expect(w.overlap.x).toBe(50);
+      expect(w.overlap.y).toBe(50);
+      expect(w.overlap.w).toBe(50);
+      expect(w.overlap.h).toBe(50);
+    });
+
+    it('should not detect collision for touching (adjacent) annotations', () => {
+      // rect at x=0, w=100 → right edge at 100
+      // rect at x=100 → left edge at 100 → touching but not overlapping
+      const annotations = [
+        { type: 'rect', x: 0, y: 0, width: 100, height: 100 },
+        { type: 'rect', x: 100, y: 0, width: 100, height: 100 }
+      ];
+      const warnings = detectCollisions(annotations, 'm');
+      expect(warnings).toHaveLength(0);
+    });
+
+    it('should include collision warnings in annotateImage response', async () => {
+      const sharp = require('sharp');
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'annotate-collision-'));
+      const inputPath = path.join(tempDir, 'input.png');
+      const outputPath = path.join(tempDir, 'output.png');
+
+      // Create a 200x200 test image
+      await sharp({
+        create: { width: 200, height: 200, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } }
+      }).png().toFile(inputPath);
+
+      // Two overlapping markers
+      const result = await annotateImage(inputPath, outputPath, [
+        { type: 'marker', x: 100, y: 100, number: 1 },
+        { type: 'marker', x: 105, y: 105, number: 2 }
+      ]);
+
+      const collisionWarnings = result.warnings.filter(w => w.type === 'overlap');
+      expect(collisionWarnings).toHaveLength(1);
+      expect(collisionWarnings[0].annotations).toEqual([0, 1]);
+    }, 15000);
+
+    it('should not include collision warnings when annotations do not overlap', async () => {
+      const sharp = require('sharp');
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'annotate-no-collision-'));
+      const inputPath = path.join(tempDir, 'input.png');
+      const outputPath = path.join(tempDir, 'output.png');
+
+      await sharp({
+        create: { width: 400, height: 400, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } }
+      }).png().toFile(inputPath);
+
+      const result = await annotateImage(inputPath, outputPath, [
+        { type: 'marker', x: 50, y: 50, number: 1 },
+        { type: 'marker', x: 350, y: 350, number: 2 }
+      ]);
+
+      const collisionWarnings = result.warnings.filter(w => w.type === 'overlap');
+      expect(collisionWarnings).toHaveLength(0);
     }, 15000);
   });
 });

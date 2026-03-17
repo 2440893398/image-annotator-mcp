@@ -872,7 +872,7 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
     : scaledAnnotations;
 
   // Clamp annotation coordinates to valid bounds
-  const { annotations: validAnnotations, warnings } = clampAnnotations(offsetAnnotations, extendedWidth, extendedHeight);
+  const { annotations: validAnnotations, warnings: clampWarnings } = clampAnnotations(offsetAnnotations, extendedWidth, extendedHeight);
 
   // Load config if not provided
   // Try to load config from the input file's directory first, then fall back to cwd
@@ -897,6 +897,10 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
     theme: options.theme || config.theme,
     customThemes: config.themes
   };
+
+  // Detect annotation collisions (AABB overlap warnings)
+  const collisionWarnings = detectCollisions(validAnnotations, sizePreset);
+  const warnings = [...clampWarnings, ...collisionWarnings];
 
   // Build SVG overlay
   const svg = buildSvg(extendedWidth, extendedHeight, validAnnotations, enhancedOptions);
@@ -1307,6 +1311,104 @@ Examples:
 }
 
 // Export for programmatic use
+/**
+ * Get the axis-aligned bounding box (AABB) for an annotation.
+ * @param {Object} annotation - The annotation object
+ * @param {string} sizePreset - Size preset key (xs, s, m, l, xl)
+ * @returns {{ x: number, y: number, w: number, h: number } | null}
+ */
+function getBoundingBox(annotation, sizePreset) {
+  const preset = SIZE_PRESETS[sizePreset] || SIZE_PRESETS.m;
+
+  switch (annotation.type) {
+    case 'marker': {
+      const r = preset.markerSize / 2;
+      return { x: annotation.x - r, y: annotation.y - r, w: r * 2, h: r * 2 };
+    }
+    case 'arrow':
+    case 'curved-arrow': {
+      const sw = annotation.strokeWidth || 5;
+      const x1 = annotation.from[0];
+      const y1 = annotation.from[1];
+      const x2 = annotation.to[0];
+      const y2 = annotation.to[1];
+      const minX = Math.min(x1, x2);
+      const minY = Math.min(y1, y2);
+      const maxX = Math.max(x1, x2);
+      const maxY = Math.max(y1, y2);
+      return { x: minX - sw, y: minY - sw, w: (maxX - minX) + sw * 2, h: (maxY - minY) + sw * 2 };
+    }
+    case 'callout': {
+      return { x: annotation.x - 80, y: annotation.y - 40, w: 160, h: 80 };
+    }
+    case 'rect':
+    case 'highlight': {
+      return { x: annotation.x, y: annotation.y, w: annotation.width || 100, h: annotation.height || 60 };
+    }
+    case 'circle': {
+      const r = annotation.radius || 30;
+      return { x: annotation.x - r, y: annotation.y - r, w: r * 2, h: r * 2 };
+    }
+    case 'label': {
+      return { x: annotation.x, y: annotation.y - 15, w: 100, h: 30 };
+    }
+    case 'blur': {
+      return { x: annotation.x, y: annotation.y, w: annotation.width || 100, h: annotation.height || 60 };
+    }
+    case 'connector': {
+      const sw = annotation.strokeWidth || 5;
+      const x1 = annotation.from[0];
+      const y1 = annotation.from[1];
+      const x2 = annotation.to[0];
+      const y2 = annotation.to[1];
+      const minX = Math.min(x1, x2);
+      const minY = Math.min(y1, y2);
+      const maxX = Math.max(x1, x2);
+      const maxY = Math.max(y1, y2);
+      return { x: minX - sw, y: minY - sw, w: (maxX - minX) + sw * 2, h: (maxY - minY) + sw * 2 };
+    }
+    case 'icon': {
+      return { x: annotation.x - 16, y: annotation.y - 16, w: 32, h: 32 };
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * Detect AABB collisions between annotations.
+ * @param {Object[]} annotations - Array of annotation objects
+ * @param {string} sizePreset - Size preset key
+ * @returns {Array<{ type: 'overlap', annotations: [number, number], overlap: { x: number, y: number, w: number, h: number } }>}
+ */
+function detectCollisions(annotations, sizePreset) {
+  const warnings = [];
+  for (let i = 0; i < annotations.length; i++) {
+    for (let j = i + 1; j < annotations.length; j++) {
+      const a = getBoundingBox(annotations[i], sizePreset);
+      const b = getBoundingBox(annotations[j], sizePreset);
+      if (!a || !b) continue;
+
+      const overlapX = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+      const overlapY = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+
+      if (overlapX > 0 && overlapY > 0) {
+        warnings.push({
+          type: 'overlap',
+          annotations: [i, j],
+          overlap: {
+            x: Math.max(a.x, b.x),
+            y: Math.max(a.y, b.y),
+            w: overlapX,
+            h: overlapY
+          }
+        });
+      }
+    }
+  }
+  return warnings;
+}
+
 module.exports = {
   annotateImage,
   buildSvg,
@@ -1333,7 +1435,10 @@ module.exports = {
   validateAnnotation,
   validateAnnotations,
   validateImagePath,
-  ValidationError
+  ValidationError,
+  // Collision detection
+  getBoundingBox,
+  detectCollisions
 };
 
 // Validation functions
