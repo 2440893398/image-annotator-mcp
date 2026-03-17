@@ -369,9 +369,14 @@ async function handleAnnotate(args) {
     canvasPadding: canvas_padding
   });
   const warningLines = result.warnings && result.warnings.length
-    ? result.warnings.map((warning) =>
-      `  Warning: ${warning.property} clamped from ${warning.original} to ${warning.clamped} (annotation #${warning.annotation + 1})`
-    ).join('\n')
+    ? result.warnings.map((warning) => {
+      if (warning.type === 'overlap') {
+        const [i, j] = warning.annotations;
+        const { x, y, w, h } = warning.overlap;
+        return `  Warning: Overlap detected between annotations #${i + 1} and #${j + 1} at ${x},${y} (${w}x${h})`;
+      }
+      return `  Warning: ${warning.property} clamped from ${warning.original} to ${warning.clamped} (annotation #${warning.annotation + 1})`;
+    }).join('\n')
     : '';
   const jpegNote = result.outputFormat === 'jpeg'
     ? '\n  Note: JPEG output does not preserve transparency. Any transparent pixels are flattened during export.'
@@ -380,7 +385,7 @@ async function handleAnnotate(args) {
   return {
     content: [{
       type: 'text',
-      text: `✓ Annotated screenshot saved: ${result.outputPath}\n  Size: ${result.width}x${result.height}\n  Annotations: ${result.annotationCount}${theme ? `\n  Theme: ${theme}` : ''}${device_pixel_ratio ? `\n  DPR: ${device_pixel_ratio}x (coordinates scaled from CSS to device pixels)` : ''}${jpegNote}\n  Alt-text: ${result.altText}${result.warnings && result.warnings.length ? `\n  Warnings: ${result.warnings.length} coordinate(s) clamped to image boundaries\n${warningLines}` : ''}`
+      text: `✓ Annotated screenshot saved: ${result.outputPath}\n  Size: ${result.width}x${result.height}\n  Annotations: ${result.annotationCount}${theme ? `\n  Theme: ${theme}` : ''}${device_pixel_ratio ? `\n  DPR: ${device_pixel_ratio}x (coordinates scaled from CSS to device pixels)` : ''}${jpegNote}\n  Alt-text: ${result.altText}${result.warnings && result.warnings.length ? `\n  Warnings: ${result.warnings.length} issue(s) detected\n${warningLines}` : ''}`
     }],
     alt_text: result.altText
   };
