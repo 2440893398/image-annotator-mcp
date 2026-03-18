@@ -39,9 +39,7 @@ image-annotator-mcp/
 | `annotate_screenshot` | Add multiple annotations to a screenshot |
 | `get_image_dimensions` | Get width, height, and format of an image |
 | `create_step_guide` | Create numbered step-by-step guides |
-| `highlight_area` | Quickly highlight a specific area |
-| `add_callout` | Add speech bubble callouts |
-| `blur_area` | Blur rectangular areas |
+| `reannotate_screenshot` | Proportionally remap an existing annotation set onto a new screenshot size |
 | `open_config_ui` | Open the annotation config UI in the browser. **Call with no arguments** to open; optionally pass `working_directory` (absolute path of the project/workspace where config should be saved) so `.image-annotator.json` is written there and used by `annotate_screenshot` for that project. |
 
 ## Running the Project

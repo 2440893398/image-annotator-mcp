@@ -90,7 +90,9 @@ function setupEventListeners() {
   // Size presets
   document.querySelectorAll('.preset-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.preset-btn').forEach((b) => {
+        b.classList.remove('active');
+      });
       btn.classList.add('active');
       state.sizePreset = btn.dataset.size;
       updatePreview();
@@ -108,7 +110,9 @@ function setupEventListeners() {
   // Theme selection
   document.querySelectorAll('.theme-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.theme-btn').forEach((b) => {
+        b.classList.remove('active');
+      });
       btn.classList.add('active');
       state.theme = btn.dataset.theme;
 
@@ -208,10 +212,12 @@ function updatePreview() {
   // Resolve sizes: use getSizePreset when autoSize is enabled
   const PREVIEW_WIDTH = 250;
   const PREVIEW_HEIGHT = 180;
+  const resolvedPresetName = state.autoSize && typeof getSizePreset === 'function'
+    ? getSizePreset(PREVIEW_WIDTH, PREVIEW_HEIGHT)
+    : state.sizePreset;
   let markerSize, arrowWidth, labelFontSize;
   if (state.autoSize && typeof getSizePreset === 'function') {
-    const presetName = getSizePreset(PREVIEW_WIDTH, PREVIEW_HEIGHT);
-    const preset = SIZE_PRESETS[presetName];
+    const preset = SIZE_PRESETS[resolvedPresetName];
     markerSize = preset.markerSize;
     arrowWidth = preset.strokeWidth;
     labelFontSize = preset.fontSize;
@@ -273,7 +279,7 @@ function updatePreview() {
 
   // Update suggested size display
   document.getElementById('suggestedSize').textContent =
-    `${state.sizePreset} (${sizeSuggestions[state.sizePreset]})`;
+    `${resolvedPresetName} (${sizeSuggestions[resolvedPresetName]})`;
 }
 
 async function saveConfig() {

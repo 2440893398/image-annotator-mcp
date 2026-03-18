@@ -145,7 +145,7 @@ function createMarker({ x, y, number, color = 'red', size = 32, shadow = true, s
         font-size="${size * 0.9}" font-weight="bold" font-family="Arial">${number}</text>`);
   } else if (style === 'badge') {
     const isMultiDigit = number > 9;
-    const width = isMultiDigit ? size * 1.6 : size * 2;
+    const width = isMultiDigit ? size * 2.4 : size * 2;
     const height = size * 2;
     elements.push(`<rect x="${x - width / 2}" y="${y - height / 2}" width="${width}" height="${height}"
       rx="${height / 2}" fill="url(#${gradientId})" ${filterAttr}/>

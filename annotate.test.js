@@ -3,6 +3,13 @@ const os = require('os');
 const path = require('path');
 
 const {
+  estimateDimensionsFromAnnotations,
+  remapAnnotation,
+  handleReannotate,
+  tools
+} = require('./server');
+
+const {
   annotateImage,
   buildSvg,
   getImageDimensions,
@@ -25,7 +32,9 @@ const {
   validateImagePath,
   ValidationError,
   getBoundingBox,
-  detectCollisions
+  detectCollisions,
+  applyRedactPatterns,
+  getAnnotationAriaLabel
 } = require('./annotate');
 
 describe('annotate.js', () => {
@@ -514,6 +523,20 @@ describe('annotate.js', () => {
       expect(result.outputPath.endsWith('.svg')).toBe(true);
       expect(fs.existsSync(result.outputPath)).toBe(true);
     }, 15000);
+
+    it('adds per-annotation aria-labels when svg is inferred from output path', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'annotate-svg-inferred-'));
+      const inputPath = await createTempPng(tempDir);
+      const outputPath = path.join(tempDir, 'output.svg');
+
+      const result = await annotateImage(inputPath, outputPath, [
+        { type: 'label', x: 10, y: 20, text: 'Hello' }
+      ]);
+
+      expect(result.outputFormat).toBe('svg');
+      const content = fs.readFileSync(result.outputPath, 'utf8');
+      expect(content).toContain('aria-label="Label &quot;Hello&quot; at 10,20"');
+    }, 15000);
   });
 
   describe('integration', () => {
@@ -578,10 +601,13 @@ describe('annotate.js', () => {
       expect(bb.h).toBe(100 + 5 * 2);
     });
 
-    it('should return bounding box for callout', () => {
-      const ann = { type: 'callout', x: 200, y: 150 };
+    it('should return text-aware bounding box for callout', () => {
+      const ann = { type: 'callout', x: 200, y: 150, text: 'Callout' };
       const bb = getBoundingBox(ann, 'm');
-      expect(bb).toEqual({ x: 120, y: 110, w: 160, h: 80 });
+      expect(bb.x).toBeCloseTo(154.5);
+      expect(bb.y).toBeCloseTo(83);
+      expect(bb.w).toBeCloseTo(91);
+      expect(bb.h).toBeCloseTo(79);
     });
 
     it('should return bounding box for rect', () => {
@@ -614,10 +640,13 @@ describe('annotate.js', () => {
       expect(bb).toEqual({ x: 70, y: 70, w: 60, h: 60 });
     });
 
-    it('should return bounding box for label', () => {
+    it('should return text-aware bounding box for label', () => {
       const ann = { type: 'label', x: 50, y: 80, text: 'Hello' };
       const bb = getBoundingBox(ann, 'm');
-      expect(bb).toEqual({ x: 50, y: 65, w: 100, h: 30 });
+      expect(bb.x).toBeCloseTo(50);
+      expect(bb.y).toBeCloseTo(56.6);
+      expect(bb.w).toBeCloseTo(45);
+      expect(bb.h).toBeCloseTo(27);
     });
 
     it('should return bounding box for blur', () => {
@@ -838,6 +867,14 @@ describe('annotate.js', () => {
       expect(result).toContain('<desc id="svg-desc">');
     });
 
+    it('should add per-annotation aria-labels to wrapped svg groups', () => {
+      const { injectA11y } = require('./annotate.js');
+      const svgString = '<svg width="100" height="100"><defs></defs><g data-annotation-index="0"><text>Hello</text></g></svg>';
+      const result = injectA11y(svgString, 'Test', [{ type: 'label', x: 10, y: 20, text: 'Hello' }]);
+      expect(result).toContain('aria-label="Label &quot;Hello&quot; at 10,20"');
+      expect(result).not.toContain('data-annotation-index');
+    });
+
     it('should insert title and desc after svg opening tag if no <defs>', () => {
       const { injectA11y } = require('./annotate.js');
       const svgString = '<svg width="100" height="100"><g></g></svg>';
@@ -862,6 +899,356 @@ describe('annotate.js', () => {
       const { injectA11y } = require('./annotate.js');
       const result = injectA11y(null, 'Test', []);
       expect(result).toBeNull();
+    });
+  });
+
+  describe('getAnnotationAriaLabel', () => {
+    it('formats marker labels with marker number and position', () => {
+      expect(getAnnotationAriaLabel({ type: 'marker', x: 20, y: 30, number: 3 }, 0)).toBe('Marker 3 at 20,30');
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// server.js — reannotate_screenshot helpers
+// ---------------------------------------------------------------------------
+
+describe('server.js reannotate_screenshot', () => {
+  describe('tools array', () => {
+    it('includes reannotate_screenshot tool definition', () => {
+      const tool = tools.find((t) => t.name === 'reannotate_screenshot');
+      expect(tool).toBeDefined();
+      expect(tool.inputSchema.required).toContain('new_screenshot_path');
+      expect(tool.inputSchema.required).toContain('previous_annotations');
+    });
+  });
+
+  describe('estimateDimensionsFromAnnotations', () => {
+    it('returns null for empty annotations', () => {
+      expect(estimateDimensionsFromAnnotations([])).toBeNull();
+    });
+
+    it('estimates from x/y coordinates', () => {
+      const dims = estimateDimensionsFromAnnotations([
+        { type: 'marker', x: 800, y: 600 }
+      ]);
+      expect(dims).toEqual({ width: 800, height: 600 });
+    });
+
+    it('estimates from from/to arrow endpoints', () => {
+      const dims = estimateDimensionsFromAnnotations([
+        { type: 'arrow', from: [100, 50], to: [1200, 900] }
+      ]);
+      expect(dims.width).toBe(1200);
+      expect(dims.height).toBe(900);
+    });
+
+    it('accounts for width/height offsets on rect annotations', () => {
+      const dims = estimateDimensionsFromAnnotations([
+        { type: 'rect', x: 900, y: 700, width: 200, height: 100 }
+      ]);
+      expect(dims.width).toBe(1100);
+      expect(dims.height).toBe(800);
+    });
+
+    it('accounts for radius on circle annotations', () => {
+      const dims = estimateDimensionsFromAnnotations([
+        { type: 'circle', x: 500, y: 400, radius: 50 }
+      ]);
+      expect(dims.width).toBe(550);
+      expect(dims.height).toBe(450);
+    });
+
+    it('returns null when all coordinates are zero', () => {
+      expect(estimateDimensionsFromAnnotations([
+        { type: 'marker', x: 0, y: 0 }
+      ])).toBeNull();
+    });
+
+    it('ignores non-finite coordinate values', () => {
+      const dims = estimateDimensionsFromAnnotations([
+        { type: 'marker', x: NaN, y: Infinity },
+        { type: 'marker', x: 400, y: 300 }
+      ]);
+      expect(dims).toEqual({ width: 400, height: 300 });
+    });
+  });
+
+  describe('remapAnnotation', () => {
+    it('scales x and y by respective factors', () => {
+      const result = remapAnnotation({ type: 'marker', x: 100, y: 200, number: 1 }, 2, 1.5);
+      expect(result.x).toBe(200);
+      expect(result.y).toBe(300);
+      expect(result.number).toBe(1);
+    });
+
+    it('scales width and height', () => {
+      const result = remapAnnotation({ type: 'rect', x: 0, y: 0, width: 400, height: 200 }, 0.5, 0.5);
+      expect(result.width).toBe(200);
+      expect(result.height).toBe(100);
+    });
+
+    it('scales from and to endpoints', () => {
+      const result = remapAnnotation({ type: 'arrow', from: [100, 50], to: [300, 150] }, 2, 2);
+      expect(result.from).toEqual([200, 100]);
+      expect(result.to).toEqual([600, 300]);
+    });
+
+    it('scales radius by the minimum of sx/sy', () => {
+      const result = remapAnnotation({ type: 'circle', x: 100, y: 100, radius: 40 }, 2, 3);
+      expect(result.radius).toBe(80); // min(2,3)=2
+    });
+
+    it('does not scale text, color, style, or icon fields', () => {
+      const ann = {
+        type: 'callout', x: 100, y: 100,
+        text: 'Hello', color: 'red', style: 'filled',
+        pointer: 'bottom', shadow: true, opacity: 0.5,
+        fontSize: 16, strokeWidth: 3, cornerRadius: 4
+      };
+      const result = remapAnnotation(ann, 2, 2);
+      expect(result.text).toBe('Hello');
+      expect(result.color).toBe('red');
+      expect(result.style).toBe('filled');
+      expect(result.pointer).toBe('bottom');
+      expect(result.shadow).toBe(true);
+      expect(result.opacity).toBe(0.5);
+      expect(result.fontSize).toBe(16);
+      expect(result.strokeWidth).toBe(3);
+      expect(result.cornerRadius).toBe(4);
+    });
+
+    it('does not scale marker number or icon name', () => {
+      const markerResult = remapAnnotation({ type: 'marker', x: 50, y: 50, number: 3 }, 2, 2);
+      expect(markerResult.number).toBe(3);
+
+      const iconResult = remapAnnotation({ type: 'icon', x: 50, y: 50, icon: 'check' }, 2, 2);
+      expect(iconResult.icon).toBe('check');
+    });
+
+    it('returns a new object without mutating the original', () => {
+      const original = { type: 'marker', x: 100, y: 200, number: 1 };
+      const result = remapAnnotation(original, 2, 2);
+      expect(result).not.toBe(original);
+      expect(original.x).toBe(100);
+    });
+  });
+
+  describe('handleReannotate', () => {
+    let tempDir;
+    let screenshotPath;
+
+    beforeAll(async () => {
+      const sharp = require('sharp');
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reannotate-'));
+      screenshotPath = path.join(tempDir, 'new-screenshot.png');
+      await sharp({
+        create: { width: 1920, height: 1080, channels: 4, background: { r: 200, g: 200, b: 200, alpha: 1 } }
+      }).png().toFile(screenshotPath);
+    });
+
+    it('returns suggested_annotations, dimension_change, warning, and next_step', async () => {
+      const result = await handleReannotate({
+        new_screenshot_path: screenshotPath,
+        previous_annotations: [{ type: 'marker', x: 480, y: 270, number: 1 }],
+        previous_image_dimensions: { width: 960, height: 540 }
+      });
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed).toHaveProperty('suggested_annotations');
+      expect(parsed).toHaveProperty('dimension_change');
+      expect(parsed).toHaveProperty('warning');
+      expect(parsed).toHaveProperty('next_step');
+    }, 15000);
+
+    it('scales coordinates proportionally when dimensions are provided', async () => {
+      const result = await handleReannotate({
+        new_screenshot_path: screenshotPath,
+        previous_annotations: [{ type: 'marker', x: 480, y: 270, number: 1 }],
+        previous_image_dimensions: { width: 960, height: 540 }
+      });
+
+      const parsed = JSON.parse(result.content[0].text);
+      const ann = parsed.suggested_annotations[0];
+      // 1920/960=2, 1080/540=2
+      expect(ann.x).toBe(960);
+      expect(ann.y).toBe(540);
+      expect(ann.number).toBe(1);
+    }, 15000);
+
+    it('includes a warning that this is an estimate', async () => {
+      const result = await handleReannotate({
+        new_screenshot_path: screenshotPath,
+        previous_annotations: [{ type: 'marker', x: 100, y: 100, number: 1 }],
+        previous_image_dimensions: { width: 960, height: 540 }
+      });
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.warning).toMatch(/estimate/i);
+      expect(parsed.warning).toMatch(/visual/i);
+    }, 15000);
+
+    it('estimates previous dimensions from annotations when not provided', async () => {
+      const result = await handleReannotate({
+        new_screenshot_path: screenshotPath,
+        previous_annotations: [
+          { type: 'marker', x: 480, y: 270, number: 1 },
+          { type: 'rect', x: 0, y: 0, width: 960, height: 540 }
+        ]
+        // no previous_image_dimensions
+      });
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.dimension_change.from.w).toBe(960);
+      expect(parsed.dimension_change.from.h).toBe(540);
+      expect(result.structuredContent.dimension_change.from.w).toBe(960);
+      expect(result.structuredContent.dimension_change.from.h).toBe(540);
+    }, 15000);
+
+    it('throws FileNotFoundError for missing screenshot', async () => {
+      await expect(handleReannotate({
+        new_screenshot_path: '/nonexistent/path/screenshot.png',
+        previous_annotations: [{ type: 'marker', x: 100, y: 100, number: 1 }],
+        previous_image_dimensions: { width: 960, height: 540 }
+      })).rejects.toThrow();
+    });
+
+    it('throws InvalidParameterError when dimensions cannot be estimated', async () => {
+      const { InvalidParameterError } = require('./annotate-errors');
+      await expect(handleReannotate({
+        new_screenshot_path: screenshotPath,
+        previous_annotations: [{ type: 'marker', x: 0, y: 0, number: 1 }]
+        // no previous_image_dimensions, and x/y are 0 so estimation fails
+      })).rejects.toThrow(InvalidParameterError);
+    }, 15000);
+
+    it('records correct scale factors in dimension_change', async () => {
+      const result = await handleReannotate({
+        new_screenshot_path: screenshotPath,
+        previous_annotations: [{ type: 'marker', x: 100, y: 100, number: 1 }],
+        previous_image_dimensions: { width: 960, height: 540 }
+      });
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.dimension_change.scaleX).toBe(2);
+      expect(parsed.dimension_change.scaleY).toBe(2);
+      expect(result.structuredContent.dimension_change.scaleX).toBe(2);
+      expect(result.structuredContent.dimension_change.scaleY).toBe(2);
+    }, 15000);
+  });
+
+  describe('applyRedactPatterns', () => {
+    const { InvalidParameterError } = require('./annotate-errors');
+
+    it('appends one blur annotation when a label text matches a pattern', () => {
+      const annotations = [
+        { type: 'label', x: 50, y: 50, text: 'secret-token-abc' }
+      ];
+      const result = applyRedactPatterns(annotations, ['secret'], 'm');
+      expect(result.length).toBe(2);
+      const blur = result[1];
+      expect(blur.type).toBe('blur');
+      expect(typeof blur.x).toBe('number');
+      expect(typeof blur.y).toBe('number');
+      expect(typeof blur.width).toBe('number');
+      expect(typeof blur.height).toBe('number');
+    });
+
+    it('appends one blur annotation when a callout text matches a pattern', () => {
+      const annotations = [
+        { type: 'callout', x: 100, y: 100, text: 'password: hunter2' }
+      ];
+      const result = applyRedactPatterns(annotations, ['password'], 'm');
+      expect(result.length).toBe(2);
+      expect(result[1].type).toBe('blur');
+    });
+
+    it('does not append blur when no annotation text matches', () => {
+      const annotations = [
+        { type: 'label', x: 50, y: 50, text: 'public info' }
+      ];
+      const result = applyRedactPatterns(annotations, ['secret'], 'm');
+      expect(result).toBe(annotations); // same reference — nothing added
+      expect(result.length).toBe(1);
+    });
+
+    it('does not mutate the original annotations array', () => {
+      const annotations = [
+        { type: 'label', x: 50, y: 50, text: 'secret' }
+      ];
+      const original = [...annotations];
+      applyRedactPatterns(annotations, ['secret'], 'm');
+      expect(annotations).toEqual(original);
+      expect(annotations.length).toBe(1);
+    });
+
+    it('adds only one blur per annotation even when multiple patterns match', () => {
+      const annotations = [
+        { type: 'label', x: 50, y: 50, text: 'secret password' }
+      ];
+      const result = applyRedactPatterns(annotations, ['secret', 'password'], 'm');
+      // Only one blur for the single matching annotation
+      const blurs = result.filter((a) => a.type === 'blur');
+      expect(blurs.length).toBe(1);
+    });
+
+    it('ignores annotations without a text field', () => {
+      const annotations = [
+        { type: 'marker', x: 50, y: 50, number: 1 }
+      ];
+      const result = applyRedactPatterns(annotations, ['.*'], 'm');
+      expect(result.length).toBe(1);
+    });
+
+    it('throws InvalidParameterError for an invalid regex pattern', () => {
+      const annotations = [
+        { type: 'label', x: 50, y: 50, text: 'hello' }
+      ];
+      expect(() => applyRedactPatterns(annotations, ['[invalid('], 'm'))
+        .toThrow(InvalidParameterError);
+    });
+
+    it('returns original array unchanged when redactPatterns is empty', () => {
+      const annotations = [
+        { type: 'label', x: 50, y: 50, text: 'secret' }
+      ];
+      const result = applyRedactPatterns(annotations, [], 'm');
+      expect(result).toBe(annotations);
+    });
+
+    it('integration: annotateImage with redactPatterns produces blur in SVG output', async () => {
+      // Use the SVG output format to avoid needing a real image file
+      // We need a real image; use the existing screenshotPath from the outer scope
+      // Instead, create a minimal PNG in memory via sharp
+      const sharp = require('sharp');
+      const os = require('os');
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'redact-test-'));
+      const inputPath = path.join(tmpDir, 'input.png');
+      const outputPath = path.join(tmpDir, 'output.svg');
+
+      // Create a 200x200 white PNG
+      await sharp({
+        create: { width: 200, height: 200, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } }
+      }).png().toFile(inputPath);
+
+      const result = await annotateImage(
+        inputPath,
+        outputPath,
+        [{ type: 'label', x: 50, y: 50, text: 'my-secret-token' }],
+        { outputFormat: 'svg', redactPatterns: ['secret'] }
+      );
+
+      // The SVG output should contain a blur filter (from the generated blur annotation)
+      const svgContent = fs.readFileSync(result.outputPath, 'utf8');
+      expect(svgContent).toContain('feGaussianBlur');
+
+      // annotationCount must reflect the auto-generated blur, not just the original input
+      // Input had 1 annotation; redaction appends 1 blur → final count must be 2
+      expect(result.annotationCount).toBe(2);
+      expect(result.annotationCount).toBeGreaterThan(1);
+
+      // Cleanup
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     });
   });
 });

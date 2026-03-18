@@ -1,0 +1,191 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`annotate.js buildSvg matches snapshots for all supported annotation types: arrow 1`] = `
+"<?xml version="1.0" encoding="UTF-8"?>
+<svg width="200" height="200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    
+    <filter id="arrow-0001-shadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="2" dy="2" stdDeviation="2" flood-opacity="0.2"/>
+    </filter>
+  
+
+      <marker id="arrow-0001-head" markerWidth="15" markerHeight="10.5"
+              refX="14" refY="5.25" orient="auto" markerUnits="userSpaceOnUse">
+        <polygon points="0 0, 15 5.25, 0 10.5" fill="#E53935"/>
+      </marker>
+    
+  </defs>
+  
+    <line x1="10" y1="10" x2="100" y2="100"
+          stroke="#E53935" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"
+          marker-end="url(#arrow-0001-head)"  filter="url(#arrow-0001-shadow)"/>
+  
+</svg>"
+`;
+
+exports[`annotate.js buildSvg matches snapshots for all supported annotation types: blur 1`] = `
+"<?xml version="1.0" encoding="UTF-8"?>
+<svg width="200" height="200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    
+      <filter id="blur-0007">
+        <feGaussianBlur stdDeviation="8"/>
+      </filter>
+    
+  </defs>
+  <rect x="15" y="15" width="90" height="40" fill="#808080" filter="url(#blur-0007)"/>
+</svg>"
+`;
+
+exports[`annotate.js buildSvg matches snapshots for all supported annotation types: callout 1`] = `
+"<?xml version="1.0" encoding="UTF-8"?>
+<svg width="200" height="200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    
+    <filter id="callout-0003-shadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="2" dy="2" stdDeviation="4" flood-opacity="0.15"/>
+    </filter>
+  
+  </defs>
+  
+    <g filter="url(#callout-0003-shadow)">
+      <rect x="14.5" y="-7" width="91" height="55"
+            rx="10" fill="#FFFFFF" stroke="#1976D2" stroke-width="3" stroke-linejoin="round"/>
+      <path d="M48,48 L60,60 L72,48" fill="#FFFFFF" stroke="#1976D2" stroke-width="3" stroke-linejoin="round"/>
+      <text x="28.5" y="20.5" dominant-baseline="middle"
+            fill="#424242" font-size="18" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" font-weight="600">
+        <tspan x="28.5" dy="0">Callout</tspan>
+      </text>
+    </g>
+  
+</svg>"
+`;
+
+exports[`annotate.js buildSvg matches snapshots for all supported annotation types: circle 1`] = `
+"<?xml version="1.0" encoding="UTF-8"?>
+<svg width="200" height="200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    
+  </defs>
+  
+    <circle cx="60" cy="60" r="30"
+            fill="none" stroke="#E53935" stroke-width="4"  />
+  
+</svg>"
+`;
+
+exports[`annotate.js buildSvg matches snapshots for all supported annotation types: connector 1`] = `
+"<?xml version="1.0" encoding="UTF-8"?>
+<svg width="200" height="200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    
+  </defs>
+  <line x1="20" y1="20" x2="120" y2="70" stroke="#757575" stroke-width="3" stroke-linecap="round" stroke-dasharray="8,5"/>
+</svg>"
+`;
+
+exports[`annotate.js buildSvg matches snapshots for all supported annotation types: curvedArrow 1`] = `
+"<?xml version="1.0" encoding="UTF-8"?>
+<svg width="200" height="200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    
+    <filter id="curved-arrow-0002-shadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="2" dy="2" stdDeviation="2" flood-opacity="0.2"/>
+    </filter>
+  
+
+    <marker id="curved-arrow-0002-head" markerWidth="15" markerHeight="10.5"
+            refX="14" refY="5.25" orient="auto" markerUnits="userSpaceOnUse">
+      <polygon points="0 0, 15 5.25, 0 10.5" fill="#E53935"/>
+    </marker>
+  
+  </defs>
+  
+    <path d="M10,10 Q26.7157287525381,83.2842712474619 100,100"
+          fill="none" stroke="#E53935" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"
+          marker-end="url(#curved-arrow-0002-head)" filter="url(#curved-arrow-0002-shadow)"/>
+  
+</svg>"
+`;
+
+exports[`annotate.js buildSvg matches snapshots for all supported annotation types: highlight 1`] = `
+"<?xml version="1.0" encoding="UTF-8"?>
+<svg width="200" height="200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    
+  </defs>
+  <rect x="15" y="15" width="90" height="40" rx="0" fill="#FDD835" opacity="0.35"/>
+</svg>"
+`;
+
+exports[`annotate.js buildSvg matches snapshots for all supported annotation types: icon 1`] = `
+"<?xml version="1.0" encoding="UTF-8"?>
+<svg width="200" height="200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    
+    <filter id="icon-0008-shadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="2" dy="2" stdDeviation="4" flood-opacity="0.3"/>
+    </filter>
+  
+  </defs>
+  
+      <g filter="url(#icon-0008-shadow)">
+        <circle cx="50" cy="50" r="28" fill="#43A047"/>
+        <path d="M41.6,50 L47.2,57 L59.8,43"
+                       fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+    
+</svg>"
+`;
+
+exports[`annotate.js buildSvg matches snapshots for all supported annotation types: label 1`] = `
+"<?xml version="1.0" encoding="UTF-8"?>
+<svg width="200" height="200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    
+  </defs>
+  
+    <text x="20" y="40" fill="#424242" font-size="18"
+          font-weight="600" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif"><tspan x="20" dy="0">Label</tspan></text>
+  
+</svg>"
+`;
+
+exports[`annotate.js buildSvg matches snapshots for all supported annotation types: marker 1`] = `
+"<?xml version="1.0" encoding="UTF-8"?>
+<svg width="200" height="200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    
+    <filter id="marker-0000-shadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="2" dy="2" stdDeviation="4" flood-opacity="0.3"/>
+    </filter>
+  
+
+    <linearGradient id="marker-0000-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#E53935;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#c71b17;stop-opacity:1" />
+    </linearGradient>
+  
+  </defs>
+  
+      <circle cx="50" cy="50" r="32" fill="url(#marker-0000-gradient)" filter="url(#marker-0000-shadow)"/>
+      <circle cx="50" cy="50" r="30" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+      <text x="50" y="61.2" text-anchor="middle" fill="white"
+            font-size="28.8" font-weight="bold" font-family="Arial, Helvetica, sans-serif">1</text>
+    
+</svg>"
+`;
+
+exports[`annotate.js buildSvg matches snapshots for all supported annotation types: rect 1`] = `
+"<?xml version="1.0" encoding="UTF-8"?>
+<svg width="200" height="200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    
+  </defs>
+  
+    <rect x="20" y="20" width="80" height="50" rx="12"
+          fill="none" stroke="#E53935" stroke-width="4" stroke-linejoin="round"  />
+  
+</svg>"
+`;
