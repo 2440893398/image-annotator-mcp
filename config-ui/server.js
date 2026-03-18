@@ -30,7 +30,10 @@ app.post('/api/config', (req, res) => {
   // Sanitize: only allow saving .image-annotator.json in cwd
   const resolved = path.resolve(targetPath);
   const cwd = process.cwd();
-  if (!resolved.startsWith(cwd) || path.basename(resolved) !== '.image-annotator.json') {
+  // Case-insensitive path comparison on Windows
+  const resolvedNorm = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  const cwdNorm = process.platform === 'win32' ? cwd.toLowerCase() : cwd;
+  if (!resolvedNorm.startsWith(cwdNorm) || path.basename(resolved) !== '.image-annotator.json') {
     return res.status(403).json({ error: 'Config can only be saved as .image-annotator.json within the working directory' });
   }
   

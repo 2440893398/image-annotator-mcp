@@ -11,6 +11,9 @@
 const http = require('http');
 const path = require('path');
 
+// Use random port to avoid conflicts with other test suites
+process.env.PORT = '0';
+
 // Mock config-loader so we don't touch the filesystem
 jest.mock('../config-loader', () => ({
   loadConfig: jest.fn(() => ({
