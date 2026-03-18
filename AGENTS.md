@@ -6,8 +6,14 @@ An MCP (Model Context Protocol) server for annotating screenshots with professio
 
 ```
 image-annotator-mcp/
-├── server.js          # Main MCP server entry point
-├── annotate.js        # Annotation engine and CLI tool
+├── server.js          # Public MCP entrypoint shim
+├── annotate.js        # Public CLI/library entrypoint shim
+├── src/
+│   ├── server/        # MCP runtime modules
+│   ├── annotate/      # Annotation engine + CLI runtime modules
+│   ├── config-ui/     # Config UI server/launcher runtime modules
+│   └── preview/       # Shared preview renderer
+├── tests/             # Consolidated Jest suites, fixtures, snapshots
 ├── package.json       # Node.js dependencies
 ├── README.md          # Documentation
 └── LICENSE            # MIT License
@@ -23,12 +29,19 @@ image-annotator-mcp/
 ## Key Files
 
 ### `server.js`
-- MCP server implementation
-- Exposes 7 tools via stdio transport (including `open_config_ui`)
-- Handles request validation and response formatting
+- Compatibility entrypoint that delegates to `src/server/`
+- Keeps `node server.js` and package `bin` wiring stable
+
+### `src/server/`
+- MCP server implementation, tool schemas, handlers, and config UI lifecycle
+- Exposes the stdio transport entrypoint used by `server.js`
 
 ### `annotate.js`
-- Core annotation engine using Sharp
+- Compatibility entrypoint that delegates to `src/annotate/`
+- Keeps CLI usage and programmatic imports stable
+
+### `src/annotate/`
+- Core annotation engine using Sharp plus CLI/runtime helpers
 - Supports 11 annotation types: marker, arrow, curved-arrow, callout, rect, circle, label, highlight, blur, connector, icon
 - Built-in themes: documentation, tutorial, bugReport, highlight
 
@@ -100,12 +113,12 @@ documentation, tutorial, bugReport, highlight
 ## Common Tasks
 
 ### Adding a New Annotation Type
-1. Add type handling in `annotate.js` - look for the `drawAnnotation` function
-2. Add type validation in `server.js` tool schema
+1. Add render/runtime handling under `src/annotate/`
+2. Add type validation in `src/server/tools.js`
 3. Test with CLI before testing MCP tools
 
 ### Modifying Themes
-Edit theme definitions in `annotate.js` - look for `THEMES` object
+Edit theme definitions in `src/annotate/render.js` - look for `THEMES` object
 
 ### Debugging
 Use CLI to test annotations before testing via MCP:
@@ -116,7 +129,7 @@ node annotate.js input.png output.png --annotations '[{"type":"marker","x":100,"
 ## Code Style
 
 - Use ES6+ JavaScript (async/await)
-- Follow existing patterns in `server.js` and `annotate.js`
+- Follow existing patterns in `src/server/` and `src/annotate/`
 - Add JSDoc comments for public functions
 - Use meaningful variable names
 

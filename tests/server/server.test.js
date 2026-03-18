@@ -1,4 +1,4 @@
-jest.mock('./annotate.js', () => ({
+jest.mock('../../src/annotate', () => ({
   annotateImage: jest.fn(),
   getImageDimensions: jest.fn(),
   COLORS: {},
@@ -8,12 +8,16 @@ jest.mock('./annotate.js', () => ({
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const annotate = require('./annotate.js');
-const serverModule = require('./server.js');
+const annotate = require('../../src/annotate');
+const serverModule = require('../../server.js');
 
 describe('server.js', () => {
   afterEach(() => {
     jest.clearAllMocks();
+  });
+
+  it('keeps the root server entrypoint wired to src/server', () => {
+    expect(require('../../server')).toBe(require('../../src/server'));
   });
 
   it('exports exactly 5 tools', () => {

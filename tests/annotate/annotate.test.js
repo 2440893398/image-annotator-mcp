@@ -7,7 +7,7 @@ const {
   remapAnnotation,
   handleReannotate,
   tools
-} = require('./server');
+} = require('../../server');
 
 const {
   annotateImage,
@@ -35,7 +35,7 @@ const {
   detectCollisions,
   applyRedactPatterns,
   getAnnotationAriaLabel
-} = require('./annotate');
+} = require('../../annotate');
 
 describe('annotate.js', () => {
   beforeEach(() => {
@@ -45,6 +45,10 @@ describe('annotate.js', () => {
 
   afterEach(() => {
     resetIdGenerator();
+  });
+
+  it('keeps the root annotate entrypoint wired to src/annotate', () => {
+    expect(require('../../annotate')).toBe(require('../../src/annotate'));
   });
 
   describe('COLORS', () => {
@@ -376,7 +380,7 @@ describe('annotate.js', () => {
       const inputPath = path.join(tempDir, 'input.png');
       const requestedOutput = path.join(tempDir, 'result.png');
 
-      await fs.promises.copyFile(path.join(__dirname, '__fixtures__', 'test-100x100.png'), inputPath);
+      await fs.promises.copyFile(path.join(__dirname, '..', 'fixtures', 'test-100x100.png'), inputPath);
       const result = await annotateImage(inputPath, requestedOutput, [{ type: 'marker', x: 50, y: 50, number: 1 }], {
         outputFormat: 'webp'
       });
@@ -447,7 +451,7 @@ describe('annotate.js', () => {
       const inputPath = path.join(tempDir, 'input.png');
       const outputPath = path.join(tempDir, 'output.png');
 
-      await fs.promises.copyFile(path.join(__dirname, '__fixtures__', 'test-100x100.png'), inputPath);
+      await fs.promises.copyFile(path.join(__dirname, '..', 'fixtures', 'test-100x100.png'), inputPath);
       const result = await annotateImage(inputPath, outputPath, [{ type: 'marker', x: 50, y: 50, number: 1 }], {
         canvasPadding: 50
       });
@@ -545,7 +549,7 @@ describe('annotate.js', () => {
       const inputPath = path.join(tempDir, 'input.png');
       const outputPath = path.join(tempDir, 'output.png');
 
-      await fs.promises.copyFile(path.join(__dirname, '__fixtures__', 'test-100x100.png'), inputPath);
+      await fs.promises.copyFile(path.join(__dirname, '..', 'fixtures', 'test-100x100.png'), inputPath);
       const result = await annotateImage(inputPath, outputPath, [
         { type: 'marker', x: 100, y: 40, number: 1 },
         { type: 'label', x: 10, y: 10, text: 'Integration' }
@@ -819,7 +823,7 @@ describe('annotate.js', () => {
 
   describe('injectA11y', () => {
     it('should add role="img" to SVG root element', () => {
-      const { injectA11y } = require('./annotate.js');
+      const { injectA11y } = require('../../annotate.js');
       const svgString = '<svg width="100" height="100"><defs></defs></svg>';
       const result = injectA11y(svgString, 'Test image', []);
       expect(result).toContain('role="img"');
@@ -827,7 +831,7 @@ describe('annotate.js', () => {
     });
 
     it('should add <title> element with truncated altText', () => {
-      const { injectA11y } = require('./annotate.js');
+      const { injectA11y } = require('../../annotate.js');
       const svgString = '<svg width="100" height="100"><defs></defs></svg>';
       const longText = 'a'.repeat(150);
       const result = injectA11y(svgString, longText, []);
@@ -840,7 +844,7 @@ describe('annotate.js', () => {
     });
 
     it('should add <desc> element with full altText', () => {
-      const { injectA11y } = require('./annotate.js');
+      const { injectA11y } = require('../../annotate.js');
       const svgString = '<svg width="100" height="100"><defs></defs></svg>';
       const altText = 'Full description of the image';
       const result = injectA11y(svgString, altText, []);
@@ -849,7 +853,7 @@ describe('annotate.js', () => {
     });
 
     it('should escape XML special characters in title and desc', () => {
-      const { injectA11y } = require('./annotate.js');
+      const { injectA11y } = require('../../annotate.js');
       const svgString = '<svg width="100" height="100"><defs></defs></svg>';
       const altText = 'Image with <special> & "characters"';
       const result = injectA11y(svgString, altText, []);
@@ -860,7 +864,7 @@ describe('annotate.js', () => {
     });
 
     it('should insert title and desc into <defs> if present', () => {
-      const { injectA11y } = require('./annotate.js');
+      const { injectA11y } = require('../../annotate.js');
       const svgString = '<svg width="100" height="100"><defs><style></style></defs><g></g></svg>';
       const result = injectA11y(svgString, 'Test', []);
       expect(result).toContain('<defs><title id="svg-title">');
@@ -868,7 +872,7 @@ describe('annotate.js', () => {
     });
 
     it('should add per-annotation aria-labels to wrapped svg groups', () => {
-      const { injectA11y } = require('./annotate.js');
+      const { injectA11y } = require('../../annotate.js');
       const svgString = '<svg width="100" height="100"><defs></defs><g data-annotation-index="0"><text>Hello</text></g></svg>';
       const result = injectA11y(svgString, 'Test', [{ type: 'label', x: 10, y: 20, text: 'Hello' }]);
       expect(result).toContain('aria-label="Label &quot;Hello&quot; at 10,20"');
@@ -876,7 +880,7 @@ describe('annotate.js', () => {
     });
 
     it('should insert title and desc after svg opening tag if no <defs>', () => {
-      const { injectA11y } = require('./annotate.js');
+      const { injectA11y } = require('../../annotate.js');
       const svgString = '<svg width="100" height="100"><g></g></svg>';
       const result = injectA11y(svgString, 'Test', []);
       expect(result).toContain('<title id="svg-title">');
@@ -888,7 +892,7 @@ describe('annotate.js', () => {
     });
 
     it('should handle empty altText gracefully', () => {
-      const { injectA11y } = require('./annotate.js');
+      const { injectA11y } = require('../../annotate.js');
       const svgString = '<svg width="100" height="100"><defs></defs></svg>';
       const result = injectA11y(svgString, '', []);
       expect(result).toContain('<title id="svg-title">');
@@ -896,7 +900,7 @@ describe('annotate.js', () => {
     });
 
     it('should return unchanged SVG if input is not a string', () => {
-      const { injectA11y } = require('./annotate.js');
+      const { injectA11y } = require('../../annotate.js');
       const result = injectA11y(null, 'Test', []);
       expect(result).toBeNull();
     });
@@ -1114,7 +1118,7 @@ describe('server.js reannotate_screenshot', () => {
     });
 
     it('throws InvalidParameterError when dimensions cannot be estimated', async () => {
-      const { InvalidParameterError } = require('./annotate-errors');
+      const { InvalidParameterError } = require('../../annotate-errors');
       await expect(handleReannotate({
         new_screenshot_path: screenshotPath,
         previous_annotations: [{ type: 'marker', x: 0, y: 0, number: 1 }]
@@ -1138,7 +1142,7 @@ describe('server.js reannotate_screenshot', () => {
   });
 
   describe('applyRedactPatterns', () => {
-    const { InvalidParameterError } = require('./annotate-errors');
+    const { InvalidParameterError } = require('../../annotate-errors');
 
     it('appends one blur annotation when a label text matches a pattern', () => {
       const annotations = [

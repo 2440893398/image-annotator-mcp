@@ -15,7 +15,7 @@ const path = require('path');
 process.env.PORT = '0';
 
 // Mock config-loader so we don't touch the filesystem
-jest.mock('../config-loader', () => ({
+jest.mock('../../src/config-loader', () => ({
   loadConfig: jest.fn(() => ({
     version: '1.0',
     sizePreset: 'auto',
@@ -32,8 +32,8 @@ jest.mock('../config-loader', () => ({
 }));
 
 // Require the app AFTER mocking config-loader
-const { app, server } = require('./server');
-const configLoader = require('../config-loader');
+const { app, server } = require('../../src/config-ui/server');
+const configLoader = require('../../src/config-loader');
 
 /**
  * Make an HTTP request to the running server.

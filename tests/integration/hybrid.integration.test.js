@@ -7,10 +7,10 @@ const os = require('os');
 const path = require('path');
 const sharp = require('sharp');
 
-const { handleAnnotate, handleDimensions, handleStepGuide } = require('./server');
+const { handleAnnotate, handleDimensions, handleStepGuide } = require('../../server');
 
-const CLI = path.join(__dirname, 'annotate.js');
-const README = path.join(__dirname, 'README.md');
+const CLI = path.join(__dirname, '..', '..', 'annotate.js');
+const README = path.join(__dirname, '..', '..', 'README.md');
 
 async function createTestPng(filePath, width = 220, height = 180) {
   await sharp({
@@ -191,7 +191,7 @@ describe('Hybrid Integration - Cross-mode Regression', () => {
         process: { on: jest.fn() }
       });
 
-      jest.doMock('./config-ui/launch', () => launchMock);
+      jest.doMock('../../src/config-ui/launch', () => launchMock);
 
       const childProcess = require('child_process');
       const spawnSpy = jest.spyOn(childProcess, 'spawn').mockImplementation(() => ({
@@ -199,7 +199,7 @@ describe('Hybrid Integration - Cross-mode Regression', () => {
         on: jest.fn()
       }));
 
-      const serverWithMocks = require('./server');
+      const serverWithMocks = require('../../server');
       const workingDir = path.join(tmpDir, 'workspace');
       fs.mkdirSync(workingDir, { recursive: true });
       const result = await serverWithMocks.handleOpenConfigUi({ working_directory: workingDir });
@@ -209,7 +209,7 @@ describe('Hybrid Integration - Cross-mode Regression', () => {
       expect(result.content[0].text).toContain('.image-annotator.json');
 
       spawnSpy.mockRestore();
-      jest.dontMock('./config-ui/launch');
+      jest.dontMock('../../src/config-ui/launch');
       jest.resetModules();
     });
 
@@ -231,7 +231,7 @@ describe('Hybrid Integration - Cross-mode Regression', () => {
       });
 
       jest.doMock('child_process', () => ({ spawn: spawnMock }));
-      const launchConfigUI = require('./config-ui/launch');
+      const launchConfigUI = require('../../src/config-ui/launch');
 
       const workingDir = path.join(tmpDir, 'config-cli-workdir');
       fs.mkdirSync(workingDir, { recursive: true });
@@ -240,7 +240,7 @@ describe('Hybrid Integration - Cross-mode Regression', () => {
       expect(launchResult.url).toBe('http://localhost:3456');
       expect(spawnMock).toHaveBeenCalledWith(
         'node',
-        [path.join(__dirname, 'config-ui', 'server.js')],
+        [path.join(__dirname, '..', '..', 'src', 'config-ui', 'server.js')],
         expect.objectContaining({ cwd: workingDir, stdio: 'pipe' })
       );
 

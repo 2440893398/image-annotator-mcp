@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 const sharp = require('sharp');
 
-const CLI = path.join(__dirname, 'annotate.js');
+const CLI = path.join(__dirname, '..', '..', 'annotate.js');
 
 async function createTestPng(filePath, width = 300, height = 300) {
   await sharp({

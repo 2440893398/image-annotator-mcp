@@ -102,7 +102,29 @@ for (const [name, target] of Object.entries(pkg.bin || {})) {
   check(`bin.${name} -> ${target} exists`, fs.existsSync(resolved), `file not found: ${resolved}`);
 }
 
-// 3. Skills package
+// 3. Runtime layout exists
+console.log('\nRuntime Layout');
+const runtimeFiles = [
+  'src/server/index.js',
+  'src/server/tools.js',
+  'src/server/handlers.js',
+  'src/server/config-ui.js',
+  'src/annotate/index.js',
+  'src/annotate/cli.js',
+  'src/annotate/render.js',
+  'src/annotate/runtime.js',
+  'src/config-ui/launch.js',
+  'src/config-ui/server.js',
+  'src/preview/renderer.js',
+  'src/config-loader.js',
+  'src/annotate-errors.js',
+];
+
+for (const file of runtimeFiles) {
+  check(`${file} exists`, fs.existsSync(path.join(ROOT, file)), `file not found: ${file}`);
+}
+
+// 4. Skills package
 console.log('\nSkills Package');
 const skillsDir = path.join(ROOT, 'skills', 'image-annotator');
 check('skills/image-annotator/ exists', fs.existsSync(skillsDir));
@@ -118,7 +140,7 @@ check(
   fs.existsSync(path.join(skillsDir, 'references', 'guardrails.md'))
 );
 
-// 4. CLI smoke tests
+// 5. CLI smoke tests
 console.log('\nCLI Smoke');
 const annotateHelp = runNodeScript('annotate.js', ['--help']);
 check('annotate.js --help exits 0', annotateHelp.status === 0, annotateHelp.stderr.trim());
@@ -167,7 +189,7 @@ check(
 const configUiHelp = runNodeScript('config-ui/launch.js', ['--help']);
 check('config-ui/launch.js --help exits 0', configUiHelp.status === 0, configUiHelp.stderr.trim());
 
-// 5. Core modules import without error
+// 6. Core modules import without error
 console.log('\nModule Imports');
 try {
   require(path.join(ROOT, 'annotate.js'));
@@ -177,21 +199,43 @@ try {
 }
 
 try {
+  require(path.join(ROOT, 'server.js'));
+  check('server.js imports cleanly', true);
+} catch (error) {
+  check('server.js imports cleanly', false, error.message);
+}
+
+try {
   require(path.join(ROOT, 'config-ui', 'launch.js'));
   check('config-ui/launch.js imports cleanly', true);
 } catch (error) {
   check('config-ui/launch.js imports cleanly', false, error.message);
 }
 
-// 6. Architecture docs
+try {
+  require(path.join(ROOT, 'src', 'annotate', 'index.js'));
+  check('src/annotate/index.js imports cleanly', true);
+} catch (error) {
+  check('src/annotate/index.js imports cleanly', false, error.message);
+}
+
+try {
+  require(path.join(ROOT, 'src', 'server', 'index.js'));
+  check('src/server/index.js imports cleanly', true);
+} catch (error) {
+  check('src/server/index.js imports cleanly', false, error.message);
+}
+
+// 7. Architecture docs
 console.log('\nDocumentation');
 check(
   'docs/hybrid-architecture.md exists',
   fs.existsSync(path.join(ROOT, 'docs', 'hybrid-architecture.md'))
 );
+check('AGENTS.md exists', fs.existsSync(path.join(ROOT, 'AGENTS.md')));
 check('README.md exists', fs.existsSync(path.join(ROOT, 'README.md')));
 
-// 7. npm pack includes required files
+// 8. npm pack includes required files
 console.log('\nPackage Contents (npm pack --dry-run)');
 const packed = gatherPackedFiles();
 check('npm pack --dry-run succeeds', packed.ok, packed.error);
@@ -202,11 +246,25 @@ const requiredPackedFiles = [
   'server.js',
   'annotate.js',
   'config-ui/launch.js',
+  'src/server/index.js',
+  'src/server/tools.js',
+  'src/server/handlers.js',
+  'src/server/config-ui.js',
+  'src/annotate/index.js',
+  'src/annotate/cli.js',
+  'src/annotate/render.js',
+  'src/annotate/runtime.js',
+  'src/config-ui/launch.js',
+  'src/config-ui/server.js',
+  'src/preview/renderer.js',
+  'src/config-loader.js',
+  'src/annotate-errors.js',
   'skills/image-annotator/SKILL.md',
   'skills/image-annotator/references/cli-commands.md',
   'skills/image-annotator/references/recipes.md',
   'skills/image-annotator/references/guardrails.md',
   'docs/hybrid-architecture.md',
+  'AGENTS.md',
 ];
 
 for (const file of requiredPackedFiles) {

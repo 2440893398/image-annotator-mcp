@@ -13,7 +13,7 @@ const os = require('os');
 const path = require('path');
 const sharp = require('sharp');
 
-const CLI = path.join(__dirname, 'annotate.js');
+const CLI = path.join(__dirname, '..', '..', 'annotate.js');
 
 /**
  * Create a small solid-color PNG for testing.

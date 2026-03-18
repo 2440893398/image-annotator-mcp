@@ -1,5 +1,5 @@
-const { SIZE_PRESETS, getSizePreset, createMarker } = require('./preview/renderer');
-const { SIZE_PRESETS: ANNOTATE_SIZE_PRESETS } = require('./annotate');
+const { SIZE_PRESETS, getSizePreset, createMarker } = require('../../src/preview/renderer');
+const { SIZE_PRESETS: ANNOTATE_SIZE_PRESETS } = require('../../src/annotate');
 
 describe('preview/renderer.js', () => {
   it('matches annotate.js size preset values', () => {

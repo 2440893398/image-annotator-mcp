@@ -2,31 +2,38 @@
 
 ## Overview
 Image Annotator uses a hybrid distribution model: MCP server + CLI + Skills package.
-All three entry points share the same annotation engine in `annotate.js`.
+Public entrypoints stay in the repository root for compatibility, while runtime code now lives under `src/`.
 
 ## Architecture Boundaries
 
-### Shared Engine (`annotate.js`)
-- `annotateImage()` — core annotation rendering
-- `getImageDimensions()` — image metadata
-- `buildSvg()` — SVG generation
-- Exported for use by both MCP server and CLI
+### Shared Engine (`src/annotate/`)
+- `index.js` — stable internal export surface for the annotation engine and CLI `main()`
+- `render.js` — SVG generation, shapes, colors, themes, and size presets
+- `runtime.js` — Sharp compositing, metadata, validation, redaction, accessibility, and geometry helpers
+- `cli.js` — CLI argument parsing and subcommand routing used by the root `annotate.js` shim
 
 ### MCP Server (`server.js`)
-- Exposes 5 tools via Model Context Protocol
-- Handles request validation, error formatting, tool schemas
-- Manages config UI child process lifecycle
+- Root compatibility shim that forwards to `src/server/`
+- Keeps `node server.js` and package `bin` usage unchanged
 - Used by: Claude Desktop, MCP-enabled clients
 
+### MCP Runtime (`src/server/`)
+- `index.js` — stdio bootstrap and public exports
+- `tools.js` — MCP tool schemas and metadata
+- `handlers.js` — request handlers and reannotation helpers
+- `config-ui.js` — config UI child-process lifecycle for `open_config_ui`
+
 ### CLI (`annotate.js` main function)
+- Root compatibility shim that forwards to `src/annotate/cli.js`
 - Subcommands: annotate (default), dimensions, reannotate, step-guide
-- Uses same `annotateImage()` and `getImageDimensions()` as MCP
+- Uses the same engine exports as MCP
 - Used by: coding agents, automation scripts, CI/CD
 
 ### Config UI (`config-ui/`)
-- Express-based web UI for visual configuration
-- Standalone launcher: `config-ui/launch.js`
-- MCP launcher: `open_config_ui` tool in `server.js`
+- `config-ui/launch.js` remains the public launcher shim
+- `src/config-ui/launch.js` and `src/config-ui/server.js` contain the runtime launcher/server logic
+- `config-ui/public/` remains the static asset root used by the runtime server
+- `src/preview/renderer.js` is served to the browser for preview rendering
 - Writes only `.image-annotator.json` within working directory
 
 ### Skills Package (`skills/image-annotator/`)
@@ -52,9 +59,26 @@ To use the Skills package in a specific agent environment:
 
 ## Dependency Map
 ```
-annotate.js (shared engine)
-├── server.js (MCP wrapper)
-│   └── config-ui/launch.js (config UI spawner)
-├── annotate.js main() (CLI wrapper)
+server.js (root MCP shim)
+└── src/server/
+    ├── tools.js
+    ├── handlers.js
+    └── config-ui.js
+
+annotate.js (root CLI/library shim)
+└── src/annotate/
+    ├── render.js
+    ├── runtime.js
+    └── cli.js
+
+config-ui/launch.js (root launcher shim)
+└── src/config-ui/
+    ├── launch.js
+    └── server.js
+
+src/config-ui/server.js
+└── src/preview/renderer.js
+
+skills/
 └── skills/ (documentation only)
 ```
