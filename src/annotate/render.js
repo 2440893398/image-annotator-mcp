@@ -258,7 +258,7 @@ function createMarker({ x, y, number, color = 'red', size = 32, shadow = true, s
   return { defs: defs.join('\n'), element: elements.join('\n') };
 }
 
-function createArrow({ from, to, color = 'red', strokeWidth = 5, style = 'solid', headStyle = 'filled', shadow = true }) {
+function createArrow({ from, to, color = 'red', strokeWidth = 2, style = 'solid', headStyle = 'filled', shadow = true }) {
   const c = getColor(color);
   const [x1, y1] = from;
   const [x2, y2] = to;
@@ -299,7 +299,7 @@ function createArrow({ from, to, color = 'red', strokeWidth = 5, style = 'solid'
   return { defs: defs.join('\n'), element };
 }
 
-function createCurvedArrow({ from, to, curve = 50, color = 'red', strokeWidth = 5, headStyle = 'filled', shadow = true }) {
+function createCurvedArrow({ from, to, curve = 50, color = 'red', strokeWidth = 2, headStyle = 'filled', shadow = true }) {
   const c = getColor(color);
   const [x1, y1] = from;
   const [x2, y2] = to;
@@ -462,7 +462,7 @@ function createCircle({ x, y, radius = 30, color = 'red', strokeWidth = 4, fill 
   return { defs: defs.join('\n'), element };
 }
 
-function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight = '600', background = null, padding = 10, cornerRadius = 8, shadow = true, handwriting = null, font = null }) {
+function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight = '600', background = 'white', padding = 10, cornerRadius = 8, shadow = true, handwriting = null, font = null }) {
   const textColor = getColor(color);
   const id = generateId('label');
   const defs = [];
@@ -530,7 +530,7 @@ function createBlur({ x, y, width, height, intensity = 8 }) {
   };
 }
 
-function createConnector({ from, to, color = 'gray', strokeWidth = 3, style = 'dashed' }) {
+function createConnector({ from, to, color = 'gray', strokeWidth = 2, style = 'dashed' }) {
   const c = getColor(color);
   const [x1, y1] = from;
   const [x2, y2] = to;
@@ -771,7 +771,7 @@ function createBracketLabel({ from, to, direction = 'right', text, color = 'red'
   return { defs: defs.join('\n'), element: elements.join('\n') };
 }
 
-function createSpotlight({ x, y, radius, width: spotWidth, height: spotHeight, color = 'primary', strokeWidth = 3, opacity = 0.5 }) {
+function createSpotlight({ x, y, radius, width: spotWidth, height: spotHeight, color = 'primary', strokeWidth = 2, opacity = 0.5 }) {
   const c = getColor(color);
   const id = generateId('spotlight');
   const defs = [];
@@ -808,7 +808,7 @@ function createSpotlight({ x, y, radius, width: spotWidth, height: spotHeight, c
   return { defs: defs.join('\n'), element: elements.join('\n') };
 }
 
-function createMagnifier({ target, anchor, radius = 60, zoom = 2, borderColor = 'primary', strokeWidth = 3, shadow = true }) {
+function createMagnifier({ target, anchor, radius = 60, zoom = 2, borderColor = 'primary', strokeWidth = 2, shadow = true }) {
   const c = getColor(borderColor);
   const id = generateId('magnifier');
   const defs = [];
@@ -821,10 +821,19 @@ function createMagnifier({ target, anchor, radius = 60, zoom = 2, borderColor = 
   }
   const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
 
-  // Dashed connector line from target to anchor
+  // Arrow head for the connector line
+  const headSize = 8;
+  defs.push(`
+    <marker id="${id}-head" markerWidth="${headSize}" markerHeight="${headSize * 0.7}"
+            refX="${headSize - 1}" refY="${headSize * 0.35}" orient="auto" markerUnits="userSpaceOnUse">
+      <polygon points="0 0, ${headSize} ${headSize * 0.35}, 0 ${headSize * 0.7}" fill="${c}"/>
+    </marker>
+  `);
+
+  // Connector line from anchor to target
   elements.push(`
-    <line x1="${tx}" y1="${ty}" x2="${ax}" y2="${ay}"
-          stroke="${c}" stroke-width="1.5" stroke-dasharray="6,3" stroke-linecap="round" opacity="0.6"/>
+    <line x1="${ax}" y1="${ay}" x2="${tx}" y2="${ty}"
+          stroke="${c}" stroke-width="2" stroke-linecap="round" opacity="0.8" marker-end="url(#${id}-head)"/>
   `);
 
   // Small cross-hair at target

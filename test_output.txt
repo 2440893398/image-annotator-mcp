@@ -1,0 +1,320 @@
+
+> image-annotator-mcp@1.0.0 test
+> jest
+
+PASS tests/config-ui/launch.test.js
+PASS tests/config-ui/server.test.js
+  ● Console
+
+    console.log
+      Config UI server running at http://localhost:0
+
+      at Server.log (src/config-ui/server.js:47:11)
+
+FAIL tests/preview/preview.renderer.test.js
+  ● Test suite failed to run
+
+    Jest encountered an unexpected token
+
+    Jest failed to parse a file. This happens e.g. when your code or its dependencies use non-standard JavaScript syntax, or when Jest is not configured to support such syntax.
+
+    Out of the box Jest supports Babel, which will be used to transform your files into valid JS based on your Babel configuration.
+
+    By default "node_modules" folder is ignored by transformers.
+
+    Here's what you can do:
+     • If you are trying to use ECMAScript Modules, see https://jestjs.io/docs/ecmascript-modules for how to enable it.
+     • If you are trying to use TypeScript, see https://jestjs.io/docs/getting-started#using-typescript
+     • To have some of your "node_modules" files transformed, you can specify a custom "transformIgnorePatterns" in your config.
+     • If you need a custom transformation, specify a "transform" option in your config.
+     • If you simply want to mock your non-JS modules (e.g. binary assets) you can stub them out with the "moduleNameMapper" config option.
+
+    You'll find more details and examples of these config options in the docs:
+    https://jestjs.io/docs/configuration
+    For information about custom transformations, see:
+    https://jestjs.io/docs/code-transformation
+
+    Details:
+
+    SyntaxError: C:\Users\24408\IdeaProjects\image-annotator-mcp\src\preview\renderer.js: Unexpected token (476:6)
+
+    [0m [90m 474 |[39m   [36mconst[39m textAnchor [33m=[39m direction [33m===[39m [32m'left'[39m [33m?[39m [32m'end'[39m [33m:[39m (direction [33m===[39m [32m'right'[39m [33m?[39m [32m'start'[39m [33m:[39m [32m'middle'[39m)[33m;[39m
+     [90m 475 |[39m   elements[33m.[39mpush([32m`<path d="${bracketPath}" fill="none" stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" ${filterAttr}/>`[39m)[33m;[39m
+    [31m[1m>[22m[39m[90m 476 |[39m       [36mcase[39m [32m'connector'[39m[33m:[39m [36mcase[39m [32m'line'[39m[33m:[39m result [33m=[39m createConnector(ann)[33m;[39m [36mbreak[39m[33m;[39m
+     [90m     |[39m       [31m[1m^[22m[39m
+     [90m 477 |[39m       [36mcase[39m [32m'icon'[39m[33m:[39m result [33m=[39m createIcon(ann)[33m;[39m [36mbreak[39m[33m;[39m
+     [90m 478 |[39m       [36mcase[39m [32m'measure'[39m[33m:[39m result [33m=[39m createMeasure(ann)[33m;[39m [36mbreak[39m[33m;[39m
+     [90m 479 |[39m       [36mcase[39m [32m'leadout'[39m[33m:[39m result [33m=[39m createLeadout(ann)[33m;[39m [36mbreak[39m[33m;[39m[0m
+
+    [0m[31m[1m>[22m[39m[90m 1 |[39m [36mconst[39m { [33mSIZE_PRESETS[39m[33m,[39m getSizePreset[33m,[39m createMarker } [33m=[39m require([32m'../../src/preview/renderer'[39m)[33m;[39m
+     [90m   |[39m                                                       [31m[1m^[22m[39m
+     [90m 2 |[39m [36mconst[39m { [33mSIZE_PRESETS[39m[33m:[39m [33mANNOTATE_SIZE_PRESETS[39m } [33m=[39m require([32m'../../src/annotate'[39m)[33m;[39m
+     [90m 3 |[39m
+     [90m 4 |[39m describe([32m'preview/renderer.js'[39m[33m,[39m () [33m=>[39m {[0m
+
+      at constructor (node_modules/@babel/parser/src/parse-error.ts:95:45)
+      at Parser.toParseError [as raise] (node_modules/@babel/parser/src/tokenizer/index.ts:1504:19)
+      at Parser.raise [as unexpected] (node_modules/@babel/parser/src/tokenizer/index.ts:1544:16)
+      at Parser.unexpected [as parseExprAtom] (node_modules/@babel/parser/src/parser/expression.ts:1355:22)
+      at Parser.parseExprAtom [as parseExprSubscripts] (node_modules/@babel/parser/src/parser/expression.ts:742:23)
+      at Parser.parseExprSubscripts [as parseUpdate] (node_modules/@babel/parser/src/parser/expression.ts:721:21)
+      at Parser.parseUpdate [as parseMaybeUnary] (node_modules/@babel/parser/src/parser/expression.ts:683:23)
+      at Parser.parseMaybeUnary [as parseMaybeUnaryOrPrivate] (node_modules/@babel/parser/src/parser/expression.ts:417:14)
+      at Parser.parseMaybeUnaryOrPrivate [as parseExprOps] (node_modules/@babel/parser/src/parser/expression.ts:429:23)
+      at Parser.parseExprOps [as parseMaybeConditional] (node_modules/@babel/parser/src/parser/expression.ts:384:23)
+      at Parser.parseMaybeConditional [as parseMaybeAssign] (node_modules/@babel/parser/src/parser/expression.ts:301:21)
+      at Parser.parseMaybeAssign [as parseExpressionBase] (node_modules/@babel/parser/src/parser/expression.ts:226:23)
+      at parseExpressionBase (node_modules/@babel/parser/src/parser/expression.ts:217:39)
+      at Parser.callback [as allowInAnd] (node_modules/@babel/parser/src/parser/expression.ts:3189:16)
+      at Parser.allowInAnd [as parseExpression] (node_modules/@babel/parser/src/parser/expression.ts:217:17)
+      at Parser.parseExpression [as parseStatementContent] (node_modules/@babel/parser/src/parser/statement.ts:688:23)
+      at Parser.parseStatementContent [as parseStatementLike] (node_modules/@babel/parser/src/parser/statement.ts:482:17)
+      at Parser.parseStatementLike [as parseStatementListItem] (node_modules/@babel/parser/src/parser/statement.ts:431:17)
+      at Parser.parseStatementListItem [as parseBlockOrModuleBlockBody] (node_modules/@babel/parser/src/parser/statement.ts:1444:16)
+      at Parser.parseBlockOrModuleBlockBody [as parseBlockBody] (node_modules/@babel/parser/src/parser/statement.ts:1417:10)
+      at Parser.parseBlockBody [as parseBlock] (node_modules/@babel/parser/src/parser/statement.ts:1385:10)
+      at Parser.parseBlock [as parseFunctionBody] (node_modules/@babel/parser/src/parser/expression.ts:2618:24)
+      at Parser.parseFunctionBody [as parseFunctionBodyAndFinish] (node_modules/@babel/parser/src/parser/expression.ts:2587:10)
+      at parseFunctionBodyAndFinish (node_modules/@babel/parser/src/parser/statement.ts:1695:12)
+      at Parser.callback [as withSmartMixTopicForbiddingContext] (node_modules/@babel/parser/src/parser/expression.ts:3168:14)
+      at Parser.withSmartMixTopicForbiddingContext [as parseFunction] (node_modules/@babel/parser/src/parser/statement.ts:1693:10)
+      at Parser.parseFunction [as parseFunctionStatement] (node_modules/@babel/parser/src/parser/statement.ts:1080:17)
+      at Parser.parseFunctionStatement [as parseStatementContent] (node_modules/@babel/parser/src/parser/statement.ts:525:21)
+      at Parser.parseStatementContent [as parseStatementLike] (node_modules/@babel/parser/src/parser/statement.ts:482:17)
+      at Parser.parseStatementLike [as parseModuleItem] (node_modules/@babel/parser/src/parser/statement.ts:419:17)
+      at Parser.parseModuleItem [as parseBlockOrModuleBlockBody] (node_modules/@babel/parser/src/parser/statement.ts:1443:16)
+      at Parser.parseBlockOrModuleBlockBody [as parseBlockBody] (node_modules/@babel/parser/src/parser/statement.ts:1417:10)
+      at Parser.parseBlockBody [as parseProgram] (node_modules/@babel/parser/src/parser/statement.ts:229:10)
+      at Parser.parseProgram [as parseTopLevel] (node_modules/@babel/parser/src/parser/statement.ts:203:25)
+      at Parser.parseTopLevel [as parse] (node_modules/@babel/parser/src/parser/index.ts:83:25)
+      at parse (node_modules/@babel/parser/src/index.ts:86:38)
+      at parser (node_modules/@babel/core/src/parser/index.ts:29:19)
+          at parser.next (<anonymous>)
+      at normalizeFile (node_modules/@babel/core/src/transformation/normalize-file.ts:50:24)
+          at normalizeFile.next (<anonymous>)
+      at run (node_modules/@babel/core/src/transformation/index.ts:41:36)
+          at run.next (<anonymous>)
+      at transform (node_modules/@babel/core/src/transform.ts:29:20)
+          at transform.next (<anonymous>)
+      at evaluateSync (node_modules/gensync/index.js:251:28)
+      at sync (node_modules/gensync/index.js:89:14)
+      at fn (node_modules/@babel/core/src/errors/rewrite-stack-trace.ts:99:14)
+      at transformSync (node_modules/@babel/core/src/transform.ts:66:52)
+      at ScriptTransformer.transformSource (node_modules/@jest/transform/build/index.js:415:31)
+      at ScriptTransformer._transformAndBuildScript (node_modules/@jest/transform/build/index.js:512:40)
+      at ScriptTransformer.transform (node_modules/@jest/transform/build/index.js:551:19)
+      at Object.require (tests/preview/preview.renderer.test.js:1:55)
+
+PASS tests/server/server.test.js
+FAIL tests/annotate/new-components.test.js
+  ● magnifier annotation › renders magnifier frame with crosshair and circle
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected substring: "stroke-dasharray"
+    Received string:    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+    <svg width=\"400\" height=\"300\" xmlns=\"http://www.w3.org/2000/svg\">
+      <defs>·····
+        <filter id=\"magnifier-test-0-shadow\" x=\"-50%\" y=\"-50%\" width=\"200%\" height=\"200%\">
+          <feDropShadow dx=\"2\" dy=\"2\" stdDeviation=\"4\" flood-opacity=\"0.25\"/>
+        </filter>····
+        <marker id=\"magnifier-test-0-head\" markerWidth=\"8\" markerHeight=\"5.6\"
+                refX=\"7\" refY=\"2.8\" orient=\"auto\" markerUnits=\"userSpaceOnUse\">
+          <polygon points=\"0 0, 8 2.8, 0 5.6\" fill=\"#1976D2\"/>
+        </marker>···
+      </defs>···
+        <line x1=\"300\" y1=\"80\" x2=\"100\" y2=\"100\"
+              stroke=\"#1976D2\" stroke-width=\"2\" stroke-linecap=\"round\" opacity=\"0.8\" marker-end=\"url(#magnifier-test-0-head)\"/>····
+        <line x1=\"92\" y1=\"100\" x2=\"108\" y2=\"100\" stroke=\"#1976D2\" stroke-width=\"1.5\" opacity=\"0.7\"/>
+        <line x1=\"100\" y1=\"92\" x2=\"100\" y2=\"108\" stroke=\"#1976D2\" stroke-width=\"1.5\" opacity=\"0.7\"/>
+        <circle cx=\"100\" cy=\"100\" r=\"10\" fill=\"none\" stroke=\"#1976D2\" stroke-width=\"1\" opacity=\"0.5\"/>····
+        <circle cx=\"300\" cy=\"80\" r=\"50\" fill=\"none\" stroke=\"#1976D2\" stroke-width=\"2\" filter=\"url(#magnifier-test-0-shadow)\"/>···
+    </svg>"
+
+    [0m [90m 152 |[39m     expect(svg)[33m.[39mtoContain([32m'<circle'[39m)[33m;[39m
+     [90m 153 |[39m     expect(svg)[33m.[39mtoContain([32m'<line'[39m)[33m;[39m
+    [31m[1m>[22m[39m[90m 154 |[39m     expect(svg)[33m.[39mtoContain([32m'stroke-dasharray'[39m)[33m;[39m
+     [90m     |[39m                 [31m[1m^[22m[39m
+     [90m 155 |[39m   })[33m;[39m
+     [90m 156 |[39m
+     [90m 157 |[39m   test([32m'renders with custom border color'[39m[33m,[39m () [33m=>[39m {[0m
+
+      at Object.toContain (tests/annotate/new-components.test.js:154:17)
+
+[image-annotator] WARN: Unknown annotation type: nonexistent
+FAIL tests/annotate/annotate.test.js (5.031 s)
+  ● annotate.js › buildSvg › matches snapshots for all supported annotation types
+
+    expect(received).toMatchSnapshot(hint)
+
+    Snapshot name: `annotate.js buildSvg matches snapshots for all supported annotation types: arrow 1`
+
+    - Snapshot  - 4
+    + Received  + 4
+
+    @@ -5,17 +5,17 @@
+          <filter id="arrow-0001-shadow" x="-50%" y="-50%" width="200%" height="200%">
+            <feDropShadow dx="2" dy="2" stdDeviation="2" flood-opacity="0.2"/>
+          </filter>
+        
+
+    -       <marker id="arrow-0001-head" markerWidth="15" markerHeight="10.5"
+    +       <marker id="arrow-0001-head" markerWidth="10" markerHeight="7"
+    -               refX="14" refY="5.25" orient="auto" markerUnits="userSpaceOnUse">
+    +               refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">
+    -         <polygon points="0 0, 15 5.25, 0 10.5" fill="#E53935"/>
+    +         <polygon points="0 0, 10 3.5, 0 7" fill="#E53935"/>
+            </marker>
+          
+        </defs>
+        
+          <line x1="10" y1="10" x2="100" y2="100"
+    -           stroke="#E53935" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"
+    +           stroke="#E53935" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                marker-end="url(#arrow-0001-head)"  filter="url(#arrow-0001-shadow)"/>
+        
+      </svg>"
+
+    [0m [90m 140 |[39m
+     [90m 141 |[39m       [33mObject[39m[33m.[39mentries(fixtures)[33m.[39mforEach(([name[33m,[39m annotations]) [33m=>[39m {
+    [31m[1m>[22m[39m[90m 142 |[39m         expect(buildSvg([35m200[39m[33m,[39m [35m200[39m[33m,[39m annotations))[33m.[39mtoMatchSnapshot(name)[33m;[39m
+     [90m     |[39m                                                 [31m[1m^[22m[39m
+     [90m 143 |[39m       })[33m;[39m
+     [90m 144 |[39m     })[33m;[39m
+     [90m 145 |[39m   })[33m;[39m[0m
+
+      at toMatchSnapshot (tests/annotate/annotate.test.js:142:49)
+          at Array.forEach (<anonymous>)
+      at Object.forEach (tests/annotate/annotate.test.js:141:32)
+
+  ● annotate.js › buildSvg › matches snapshots for all supported annotation types
+
+    expect(received).toMatchSnapshot(hint)
+
+    Snapshot name: `annotate.js buildSvg matches snapshots for all supported annotation types: curvedArrow 1`
+
+    - Snapshot  - 4
+    + Received  + 4
+
+    @@ -5,17 +5,17 @@
+          <filter id="curved-arrow-0002-shadow" x="-50%" y="-50%" width="200%" height="200%">
+            <feDropShadow dx="2" dy="2" stdDeviation="2" flood-opacity="0.2"/>
+          </filter>
+        
+
+    -     <marker id="curved-arrow-0002-head" markerWidth="15" markerHeight="10.5"
+    +     <marker id="curved-arrow-0002-head" markerWidth="10" markerHeight="7"
+    -             refX="14" refY="5.25" orient="auto" markerUnits="userSpaceOnUse">
+    +             refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">
+    -       <polygon points="0 0, 15 5.25, 0 10.5" fill="#E53935"/>
+    +       <polygon points="0 0, 10 3.5, 0 7" fill="#E53935"/>
+          </marker>
+        
+        </defs>
+        
+          <path d="M10,10 Q26.7157287525381,83.2842712474619 100,100"
+    -           fill="none" stroke="#E53935" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"
+    +           fill="none" stroke="#E53935" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                marker-end="url(#curved-arrow-0002-head)" filter="url(#curved-arrow-0002-shadow)"/>
+        
+      </svg>"
+
+    [0m [90m 140 |[39m
+     [90m 141 |[39m       [33mObject[39m[33m.[39mentries(fixtures)[33m.[39mforEach(([name[33m,[39m annotations]) [33m=>[39m {
+    [31m[1m>[22m[39m[90m 142 |[39m         expect(buildSvg([35m200[39m[33m,[39m [35m200[39m[33m,[39m annotations))[33m.[39mtoMatchSnapshot(name)[33m;[39m
+     [90m     |[39m                                                 [31m[1m^[22m[39m
+     [90m 143 |[39m       })[33m;[39m
+     [90m 144 |[39m     })[33m;[39m
+     [90m 145 |[39m   })[33m;[39m[0m
+
+      at toMatchSnapshot (tests/annotate/annotate.test.js:142:49)
+          at Array.forEach (<anonymous>)
+      at Object.forEach (tests/annotate/annotate.test.js:141:32)
+
+  ● annotate.js › buildSvg › matches snapshots for all supported annotation types
+
+    expect(received).toMatchSnapshot(hint)
+
+    Snapshot name: `annotate.js buildSvg matches snapshots for all supported annotation types: label 1`
+
+    - Snapshot  -  2
+    + Received  + 11
+
+      "<?xml version="1.0" encoding="UTF-8"?>
+      <svg width="200" height="200" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          
+    -   </defs>
+    -   
+    +     <filter id="label-0006-shadow" x="-50%" y="-50%" width="200%" height="200%">
+    +       <feDropShadow dx="2" dy="2" stdDeviation="4" flood-opacity="0.2"/>
+    +     </filter>
+    +   
+    +   </defs>
+    +   
+    +       <rect x="10" y="10.599999999999998"
+    +             width="65" height="43.400000000000006"
+    +             rx="8" fill="#FFFFFF" stroke="#424242" stroke-width="2" stroke-linejoin="round" filter="url(#label-0006-shadow)"/>
+    +     
+    +
+          <text x="20" y="40" fill="#424242" font-size="18"
+                font-weight="600" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif"><tspan x="20" dy="0">Label</tspan></text>
+        
+      </svg>"
+
+    [0m [90m 140 |[39m
+     [90m 141 |[39m       [33mObject[39m[33m.[39mentries(fixtures)[33m.[39mforEach(([name[33m,[39m annotations]) [33m=>[39m {
+    [31m[1m>[22m[39m[90m 142 |[39m         expect(buildSvg([35m200[39m[33m,[39m [35m200[39m[33m,[39m annotations))[33m.[39mtoMatchSnapshot(name)[33m;[39m
+     [90m     |[39m                                                 [31m[1m^[22m[39m
+     [90m 143 |[39m       })[33m;[39m
+     [90m 144 |[39m     })[33m;[39m
+     [90m 145 |[39m   })[33m;[39m[0m
+
+      at toMatchSnapshot (tests/annotate/annotate.test.js:142:49)
+          at Array.forEach (<anonymous>)
+      at Object.forEach (tests/annotate/annotate.test.js:141:32)
+
+  ● annotate.js › buildSvg › matches snapshots for all supported annotation types
+
+    expect(received).toMatchSnapshot(hint)
+
+    Snapshot name: `annotate.js buildSvg matches snapshots for all supported annotation types: connector 1`
+
+    - Snapshot  - 1
+    + Received  + 1
+
+      "<?xml version="1.0" encoding="UTF-8"?>
+      <svg width="200" height="200" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          
+        </defs>
+    -   <line x1="20" y1="20" x2="120" y2="70" stroke="#757575" stroke-width="3" stroke-linecap="round" stroke-dasharray="8,5"/>
+    +   <line x1="20" y1="20" x2="120" y2="70" stroke="#757575" stroke-width="2" stroke-linecap="round" stroke-dasharray="8,5"/>
+      </svg>"
+
+    [0m [90m 140 |[39m
+     [90m 141 |[39m       [33mObject[39m[33m.[39mentries(fixtures)[33m.[39mforEach(([name[33m,[39m annotations]) [33m=>[39m {
+    [31m[1m>[22m[39m[90m 142 |[39m         expect(buildSvg([35m200[39m[33m,[39m [35m200[39m[33m,[39m annotations))[33m.[39mtoMatchSnapshot(name)[33m;[39m
+     [90m     |[39m                                                 [31m[1m^[22m[39m
+     [90m 143 |[39m       })[33m;[39m
+     [90m 144 |[39m     })[33m;[39m
+     [90m 145 |[39m   })[33m;[39m[0m
+
+      at toMatchSnapshot (tests/annotate/annotate.test.js:142:49)
+          at Array.forEach (<anonymous>)
+      at Object.forEach (tests/annotate/annotate.test.js:141:32)
+
+ › 4 snapshots failed.
+PASS tests/annotate/annotate.cli.step-guide.test.js (5.085 s)
+PASS tests/annotate/annotate.cli.commands.test.js (6.404 s)
+PASS tests/integration/hybrid.integration.test.js (7.489 s)
+PASS tests/annotate/annotate.cli.annotate.test.js (14.031 s)
+
+Snapshot Summary
+ › 4 snapshots failed from 1 test suite. Inspect your code changes or run `npm test -- -u` to update them.
+
+Test Suites: 3 failed, 7 passed, 10 total
+Tests:       2 failed, 198 passed, 200 total
+Snapshots:   4 failed, 7 passed, 11 total
+Time:        16.203 s
+Ran all test suites.

@@ -151,7 +151,7 @@ describe('magnifier annotation', () => {
     }]);
     expect(svg).toContain('<circle');
     expect(svg).toContain('<line');
-    expect(svg).toContain('stroke-dasharray');
+    expect(svg).toContain('marker-end');
   });
 
   test('renders with custom border color', () => {
