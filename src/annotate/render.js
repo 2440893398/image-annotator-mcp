@@ -606,6 +606,208 @@ function createIcon({ x, y, icon, color = 'green', size = 28, shadow = true }) {
   };
 }
 
+function createMeasure({ from, to, text, color = 'red', fontSize = 16, strokeWidth = 2, shadow = true }) {
+  const c = getColor(color);
+  const id = generateId('measure');
+  const defs = [];
+  const elements = [];
+  const [x1, y1] = from;
+  const [x2, y2] = to;
+
+  if (shadow) {
+    defs.push(createDropShadow(`${id}-shadow`, 2, 0.15));
+  }
+  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+
+  // Calculate line angle and perpendicular
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.sqrt(dx * dx + dy * dy) || 1;
+  const nx = -dy / len; // perpendicular unit vector
+  const ny = dx / len;
+  const tickLen = 10;
+
+  // Main line
+  elements.push(`
+    <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
+          stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" ${filterAttr}/>
+  `);
+
+  // Tick marks at both ends
+  elements.push(`
+    <line x1="${x1 + nx * tickLen}" y1="${y1 + ny * tickLen}"
+          x2="${x1 - nx * tickLen}" y2="${y1 - ny * tickLen}"
+          stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round"/>
+  `);
+  elements.push(`
+    <line x1="${x2 + nx * tickLen}" y1="${y2 + ny * tickLen}"
+          x2="${x2 - nx * tickLen}" y2="${y2 - ny * tickLen}"
+          stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round"/>
+  `);
+
+  // Center text with background
+  const midX = (x1 + x2) / 2;
+  const midY = (y1 + y2) / 2;
+  const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+  // Flip text if upside down
+  const textAngle = (angle > 90 || angle < -90) ? angle + 180 : angle;
+  const textW = getTextContentWidthPx(text, fontSize) + 12;
+  const textH = fontSize * 1.4;
+
+  elements.push(`
+    <g transform="translate(${midX}, ${midY}) rotate(${textAngle})">
+      <rect x="${-textW / 2}" y="${-textH / 2}" width="${textW}" height="${textH}"
+            rx="4" fill="white" stroke="${c}" stroke-width="1.5"/>
+      <text x="0" y="${fontSize * 0.35}" text-anchor="middle" fill="${c}"
+            font-size="${fontSize}" font-weight="700" font-family="${CLEAN_FONT}">${escapeXml(text)}</text>
+    </g>
+  `);
+
+  return { defs: defs.join('\n'), element: elements.join('\n') };
+}
+
+function createLeadout({ target, anchor, text, color = 'red', fontSize = 16, strokeWidth = 2, shadow = true }) {
+  const c = getColor(color);
+  const id = generateId('leadout');
+  const defs = [];
+  const elements = [];
+  const [tx, ty] = target;
+  const [ax, ay] = anchor;
+
+  if (shadow) {
+    defs.push(createDropShadow(`${id}-shadow`, 3, 0.2));
+  }
+  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+
+  // Small dot at target
+  elements.push(`<circle cx="${tx}" cy="${ty}" r="5" fill="${c}"/>`);
+
+  // Connecting line
+  elements.push(`
+    <line x1="${tx}" y1="${ty}" x2="${ax}" y2="${ay}"
+          stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round"/>
+  `);
+
+  // Text label box at anchor
+  const padding = 10;
+  const textW = getTextContentWidthPx(text, fontSize) + padding * 2;
+  const textH = fontSize * 1.4 + padding;
+  // Position box so anchor is at the edge closest to target
+  const boxX = ax - textW / 2;
+  const boxY = ay - textH / 2;
+
+  elements.push(`
+    <g ${filterAttr}>
+      <rect x="${boxX}" y="${boxY}" width="${textW}" height="${textH}"
+            rx="8" fill="white" stroke="${c}" stroke-width="2" stroke-linejoin="round"/>
+      <text x="${ax}" y="${ay + fontSize * 0.35 - textH * 0.05}" text-anchor="middle" fill="${c}"
+            font-size="${fontSize}" font-weight="700" font-family="${CLEAN_FONT}">${escapeXml(text)}</text>
+    </g>
+  `);
+
+  return { defs: defs.join('\n'), element: elements.join('\n') };
+}
+
+function createBracketLabel({ from, to, direction = 'right', text, color = 'red', fontSize = 16, strokeWidth = 2, shadow = true }) {
+  const c = getColor(color);
+  const id = generateId('bracket');
+  const defs = [];
+  const elements = [];
+  const [x1, y1] = from;
+  const [x2, y2] = to;
+
+  if (shadow) {
+    defs.push(createDropShadow(`${id}-shadow`, 2, 0.15));
+  }
+  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+
+  const bracketDepth = 20;
+  const midX = (x1 + x2) / 2;
+  const midY = (y1 + y2) / 2;
+  let bracketPath;
+  let labelX, labelY;
+
+  switch (direction) {
+    case 'right':
+      bracketPath = `M${x1},${y1} L${x1 + bracketDepth},${y1} L${x1 + bracketDepth},${midY} L${x1 + bracketDepth + 10},${midY} M${x1 + bracketDepth},${midY} L${x1 + bracketDepth},${y2} L${x1},${y2}`;
+      labelX = x1 + bracketDepth + 16;
+      labelY = midY;
+      break;
+    case 'left':
+      bracketPath = `M${x1},${y1} L${x1 - bracketDepth},${y1} L${x1 - bracketDepth},${midY} L${x1 - bracketDepth - 10},${midY} M${x1 - bracketDepth},${midY} L${x1 - bracketDepth},${y2} L${x1},${y2}`;
+      labelX = x1 - bracketDepth - 16;
+      labelY = midY;
+      break;
+    case 'bottom':
+      bracketPath = `M${x1},${y1} L${x1},${y1 + bracketDepth} L${midX},${y1 + bracketDepth} L${midX},${y1 + bracketDepth + 10} M${midX},${y1 + bracketDepth} L${x2},${y1 + bracketDepth} L${x2},${y1}`;
+      labelX = midX;
+      labelY = y1 + bracketDepth + 20;
+      break;
+    case 'top':
+    default:
+      bracketPath = `M${x1},${y1} L${x1},${y1 - bracketDepth} L${midX},${y1 - bracketDepth} L${midX},${y1 - bracketDepth - 10} M${midX},${y1 - bracketDepth} L${x2},${y1 - bracketDepth} L${x2},${y1}`;
+      labelX = midX;
+      labelY = y1 - bracketDepth - 20;
+      break;
+  }
+
+  // Bracket path
+  elements.push(`
+    <path d="${bracketPath}" fill="none" stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" ${filterAttr}/>
+  `);
+
+  // Text label
+  const padding = 8;
+  const textW = getTextContentWidthPx(text, fontSize) + padding * 2;
+  const textH = fontSize * 1.4 + padding;
+  const isHorizontalLabel = direction === 'left' || direction === 'right';
+  const textAnchor = direction === 'left' ? 'end' : (direction === 'right' ? 'start' : 'middle');
+
+  elements.push(`
+    <text x="${labelX}" y="${labelY + fontSize * 0.35}" text-anchor="${textAnchor}" fill="${c}"
+          font-size="${fontSize}" font-weight="700" font-family="${CLEAN_FONT}">${escapeXml(text)}</text>
+  `);
+
+  return { defs: defs.join('\n'), element: elements.join('\n') };
+}
+
+function createSpotlight({ x, y, radius, width: spotWidth, height: spotHeight, color = 'primary', strokeWidth = 3, opacity = 0.5 }) {
+  const c = getColor(color);
+  const id = generateId('spotlight');
+  const defs = [];
+  const elements = [];
+
+  // We need the image dimensions to cover the full image, but we don't have them here.
+  // The mask approach works with a large enough rect (the SVG viewBox covers the image).
+  const maskId = `${id}-mask`;
+  const useRect = spotWidth && spotHeight;
+
+  if (useRect) {
+    defs.push(`
+      <mask id="${maskId}">
+        <rect x="0" y="0" width="100%" height="100%" fill="white"/>
+        <rect x="${x - spotWidth / 2}" y="${y - spotHeight / 2}" width="${spotWidth}" height="${spotHeight}" rx="8" fill="black"/>
+      </mask>
+    `);
+    // Dark overlay with cutout
+    elements.push(`<rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,${opacity})" mask="url(#${maskId})"/>`);
+    // Stroke around cutout
+    elements.push(`<rect x="${x - spotWidth / 2}" y="${y - spotHeight / 2}" width="${spotWidth}" height="${spotHeight}" rx="8" fill="none" stroke="${c}" stroke-width="${strokeWidth}"/>`);
+  } else {
+    const r = radius || 60;
+    defs.push(`
+      <mask id="${maskId}">
+        <rect x="0" y="0" width="100%" height="100%" fill="white"/>
+        <circle cx="${x}" cy="${y}" r="${r}" fill="black"/>
+      </mask>
+    `);
+    elements.push(`<rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,${opacity})" mask="url(#${maskId})"/>`);
+    elements.push(`<circle cx="${x}" cy="${y}" r="${r}" fill="none" stroke="${c}" stroke-width="${strokeWidth}"/>`);
+  }
+
+  return { defs: defs.join('\n'), element: elements.join('\n') };
+}
+
 function adjustColor(hex, amount) {
   const num = parseInt(hex.replace('#', ''), 16);
   const r = Math.min(255, Math.max(0, (num >> 16) + amount));
@@ -686,6 +888,19 @@ function buildSvg(width, height, annotations, options = {}) {
       case 'icon':
         result = createIcon(mergedAnn);
         break;
+      case 'measure':
+        result = createMeasure(mergedAnn);
+        break;
+      case 'leadout':
+        result = createLeadout(mergedAnn);
+        break;
+      case 'bracket-label':
+      case 'bracketLabel':
+        result = createBracketLabel(mergedAnn);
+        break;
+      case 'spotlight':
+        result = createSpotlight(mergedAnn);
+        break;
       default:
         log('WARN', `Unknown annotation type: ${annotation.type}`);
         continue;
@@ -740,6 +955,10 @@ module.exports = {
   createBlur,
   createConnector,
   createIcon,
+  createMeasure,
+  createLeadout,
+  createBracketLabel,
+  createSpotlight,
   adjustColor,
   buildSvg
 };

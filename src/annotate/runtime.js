@@ -296,6 +296,8 @@ function scaleAnnotationCoords(annotation, dpr) {
   if (scaled.radius !== undefined) scaled.radius = scaleValue(scaled.radius);
   if (Array.isArray(scaled.from)) scaled.from = scaled.from.map(scaleValue);
   if (Array.isArray(scaled.to)) scaled.to = scaled.to.map(scaleValue);
+  if (Array.isArray(scaled.target)) scaled.target = scaled.target.map(scaleValue);
+  if (Array.isArray(scaled.anchor)) scaled.anchor = scaled.anchor.map(scaleValue);
 
   return scaled;
 }
@@ -332,6 +334,8 @@ function offsetAnnotationCoords(annotation, offsetX, offsetY) {
   if (shifted.y !== undefined) shifted.y += offsetY;
   if (Array.isArray(shifted.from)) shifted.from = [shifted.from[0] + offsetX, shifted.from[1] + offsetY];
   if (Array.isArray(shifted.to)) shifted.to = [shifted.to[0] + offsetX, shifted.to[1] + offsetY];
+  if (Array.isArray(shifted.target)) shifted.target = [shifted.target[0] + offsetX, shifted.target[1] + offsetY];
+  if (Array.isArray(shifted.anchor)) shifted.anchor = [shifted.anchor[0] + offsetX, shifted.anchor[1] + offsetY];
   return shifted;
 }
 
@@ -354,6 +358,12 @@ function generateAltText(annotations, imageWidth, imageHeight, options = {}) {
       details.push(`label "${annotation.text}"`);
     } else if (type === 'marker' && annotation.number !== undefined && annotation.x !== undefined && annotation.y !== undefined) {
       details.push(`marker #${annotation.number} at (${annotation.x},${annotation.y})`);
+    } else if (type === 'measure' && annotation.text) {
+      details.push(`measure "${annotation.text}"`);
+    } else if (type === 'leadout' && annotation.text) {
+      details.push(`leadout "${annotation.text}"`);
+    } else if ((type === 'bracket-label' || type === 'bracketLabel') && annotation.text) {
+      details.push(`bracket "${annotation.text}"`);
     }
   }
 
@@ -561,6 +571,47 @@ function getBoundingBox(annotation, sizePreset) {
     }
     case 'icon':
       return { x: annotation.x - 16, y: annotation.y - 16, w: 32, h: 32 };
+    case 'measure': {
+      const sw = annotation.strokeWidth || 2;
+      const x1 = annotation.from[0];
+      const y1 = annotation.from[1];
+      const x2 = annotation.to[0];
+      const y2 = annotation.to[1];
+      const minX = Math.min(x1, x2);
+      const minY = Math.min(y1, y2);
+      const maxX = Math.max(x1, x2);
+      const maxY = Math.max(y1, y2);
+      return { x: minX - sw - 10, y: minY - sw - 10, w: (maxX - minX) + sw * 2 + 20, h: (maxY - minY) + sw * 2 + 20 };
+    }
+    case 'leadout': {
+      const [tx, ty] = annotation.target || [0, 0];
+      const [ax, ay] = annotation.anchor || [0, 0];
+      const fontSize = annotation.fontSize || preset.fontSize || 16;
+      const textW = 100;
+      const textH = fontSize * 1.4 + 10;
+      const minX = Math.min(tx, ax - textW / 2);
+      const minY = Math.min(ty, ay - textH / 2);
+      const maxX = Math.max(tx, ax + textW / 2);
+      const maxY = Math.max(ty, ay + textH / 2);
+      return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    }
+    case 'bracket-label': {
+      const [bx1, by1] = annotation.from || [0, 0];
+      const [bx2, by2] = annotation.to || [0, 0];
+      const depth = 30;
+      const minX = Math.min(bx1, bx2) - depth;
+      const minY = Math.min(by1, by2) - depth;
+      const maxX = Math.max(bx1, bx2) + depth;
+      const maxY = Math.max(by1, by2) + depth;
+      return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    }
+    case 'spotlight': {
+      if (annotation.width && annotation.height) {
+        return { x: annotation.x - annotation.width / 2, y: annotation.y - annotation.height / 2, w: annotation.width, h: annotation.height };
+      }
+      const r = annotation.radius || 60;
+      return { x: annotation.x - r, y: annotation.y - r, w: r * 2, h: r * 2 };
+    }
     default:
       return null;
   }
@@ -621,6 +672,14 @@ function getAnnotationAriaLabel(annotation, index) {
       return `Connector ${position}`;
     case 'icon':
       return `Icon ${annotation.icon || 'badge'} ${position}`;
+    case 'measure':
+      return `Measurement${annotation.text ? ` "${annotation.text}"` : ''} ${position}`;
+    case 'leadout':
+      return `Leadout${annotation.text ? ` "${annotation.text}"` : ''} ${position}`;
+    case 'bracket-label':
+      return `Bracket${annotation.text ? ` "${annotation.text}"` : ''} ${position}`;
+    case 'spotlight':
+      return `Spotlight ${position}`;
     default:
       return `${annotation.type || 'annotation'} ${position}`;
   }
@@ -671,9 +730,19 @@ function validateAnnotation(annotation) {
       throw new ValidationError('Marker annotations require x and y coordinates');
     }
   }
-  if (annotation.type === 'arrow' || annotation.type === 'curved-arrow' || annotation.type === 'connector') {
+  if (annotation.type === 'arrow' || annotation.type === 'curved-arrow' || annotation.type === 'connector' || annotation.type === 'measure' || annotation.type === 'bracket-label') {
     if (!Array.isArray(annotation.from) || !Array.isArray(annotation.to)) {
       throw new ValidationError(`${annotation.type} annotations require from and to coordinate arrays`);
+    }
+  }
+  if (annotation.type === 'leadout') {
+    if (!Array.isArray(annotation.target) || !Array.isArray(annotation.anchor)) {
+      throw new ValidationError('leadout annotations require target and anchor coordinate arrays');
+    }
+  }
+  if (annotation.type === 'spotlight') {
+    if (typeof annotation.x !== 'number' || typeof annotation.y !== 'number') {
+      throw new ValidationError('spotlight annotations require x and y coordinates');
     }
   }
   return true;

@@ -15,11 +15,19 @@ Annotation types available:
 • blur - Blur sensitive content
 • connector - Dashed lines between elements
 • icon - Icon badges (check, x, warning, info, question)
+• measure - Dimension measurement lines with tick marks and centered text
+• leadout - Leader line callout with dot at target and text label at anchor
+• bracket-label - Bracket annotation grouping an area with a label
+• spotlight - Dark overlay with cutout to focus on a specific area
 
 Quick reference for common tasks:
 • Blur sensitive info: {"type":"blur","x":100,"y":100,"width":200,"height":50}
 • Highlight area: {"type":"highlight","x":50,"y":50,"width":300,"height":100,"color":"yellow","opacity":0.35}
 • Speech bubble: {"type":"callout","x":200,"y":200,"text":"Your note here","pointer":"bottom"}
+• Measurement: {"type":"measure","from":[100,200],"to":[300,200],"text":"76CM"}
+• Leader line: {"type":"leadout","target":[150,150],"anchor":[300,100],"text":"Steel material"}
+• Bracket: {"type":"bracket-label","from":[50,100],"to":[50,300],"direction":"right","text":"Group A"}
+• Spotlight: {"type":"spotlight","x":200,"y":200,"radius":80}
 
 Themes: documentation, tutorial, bugReport, highlight
 
@@ -91,7 +99,7 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
             properties: {
               type: {
                 type: 'string',
-                enum: ['marker', 'arrow', 'curved-arrow', 'callout', 'rect', 'circle', 'label', 'highlight', 'blur', 'connector', 'icon'],
+                enum: ['marker', 'arrow', 'curved-arrow', 'callout', 'rect', 'circle', 'label', 'highlight', 'blur', 'connector', 'icon', 'measure', 'leadout', 'bracket-label', 'spotlight'],
                 description: 'Annotation type'
               },
               x: { type: 'number', minimum: 0, description: 'X coordinate of the annotation anchor in image pixels.' },
@@ -100,6 +108,10 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
               text: { type: 'string', description: 'Text for labels/callouts' },
               from: { type: 'array', items: { type: 'number' }, description: '[x, y] start point' },
               to: { type: 'array', items: { type: 'number' }, description: '[x, y] end point' },
+              target: { type: 'array', items: { type: 'number' }, description: '[x, y] target point for leadout annotations' },
+              anchor: { type: 'array', items: { type: 'number' }, description: '[x, y] anchor point for leadout/magnifier text placement' },
+              direction: { type: 'string', enum: ['top', 'bottom', 'left', 'right'], description: 'Direction for bracket-label or callout pointer' },
+              zoom: { type: 'number', minimum: 1, maximum: 10, description: 'Zoom factor for magnifier (default: 2)' },
               width: { type: 'number', minimum: 0, description: 'Width of the annotation in image pixels. Use for rectangles, highlights, blur regions, and other box-based shapes.' },
               height: { type: 'number', minimum: 0, description: 'Height of the annotation in image pixels. Use for rectangles, highlights, blur regions, and other box-based shapes.' },
               radius: { type: 'number', minimum: 0, description: 'Radius in image pixels for circular annotations.' },
