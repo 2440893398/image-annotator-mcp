@@ -1,4 +1,4 @@
-const { buildSvg, setIdGenerator, resetIdGenerator, createMeasure, createLeadout, createBracketLabel, createSpotlight } = require('../../src/annotate/render');
+const { buildSvg, setIdGenerator, resetIdGenerator, createMeasure, createLeadout, createBracketLabel, createSpotlight, createMagnifier } = require('../../src/annotate/render');
 
 beforeEach(() => {
   let counter = 0;
@@ -137,5 +137,59 @@ describe('spotlight annotation', () => {
       color: 'green'
     }]);
     expect(svg).toContain('#43A047');
+  });
+});
+
+describe('magnifier annotation', () => {
+  test('renders magnifier frame with crosshair and circle', () => {
+    const svg = buildSvg(400, 300, [{
+      type: 'magnifier',
+      target: [100, 100],
+      anchor: [300, 80],
+      radius: 50,
+      zoom: 3
+    }]);
+    expect(svg).toContain('<circle');
+    expect(svg).toContain('<line');
+    expect(svg).toContain('stroke-dasharray');
+  });
+
+  test('renders with custom border color', () => {
+    const svg = buildSvg(400, 300, [{
+      type: 'magnifier',
+      target: [100, 100],
+      anchor: [300, 80],
+      borderColor: 'orange'
+    }]);
+    expect(svg).toContain('#FB8C00');
+  });
+});
+
+describe('validation', () => {
+  const { validateAnnotation } = require('../../src/annotate/runtime');
+
+  test('measure requires from and to', () => {
+    expect(() => validateAnnotation({ type: 'measure' })).toThrow();
+    expect(() => validateAnnotation({ type: 'measure', from: [0, 0], to: [1, 1] })).not.toThrow();
+  });
+
+  test('leadout requires target and anchor', () => {
+    expect(() => validateAnnotation({ type: 'leadout' })).toThrow();
+    expect(() => validateAnnotation({ type: 'leadout', target: [0, 0], anchor: [1, 1] })).not.toThrow();
+  });
+
+  test('magnifier requires target and anchor', () => {
+    expect(() => validateAnnotation({ type: 'magnifier' })).toThrow();
+    expect(() => validateAnnotation({ type: 'magnifier', target: [0, 0], anchor: [1, 1] })).not.toThrow();
+  });
+
+  test('spotlight requires x and y', () => {
+    expect(() => validateAnnotation({ type: 'spotlight' })).toThrow();
+    expect(() => validateAnnotation({ type: 'spotlight', x: 100, y: 100 })).not.toThrow();
+  });
+
+  test('bracket-label requires from and to', () => {
+    expect(() => validateAnnotation({ type: 'bracket-label' })).toThrow();
+    expect(() => validateAnnotation({ type: 'bracket-label', from: [0, 0], to: [1, 1] })).not.toThrow();
   });
 });

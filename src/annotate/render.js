@@ -808,6 +808,41 @@ function createSpotlight({ x, y, radius, width: spotWidth, height: spotHeight, c
   return { defs: defs.join('\n'), element: elements.join('\n') };
 }
 
+function createMagnifier({ target, anchor, radius = 60, zoom = 2, borderColor = 'primary', strokeWidth = 3, shadow = true }) {
+  const c = getColor(borderColor);
+  const id = generateId('magnifier');
+  const defs = [];
+  const elements = [];
+  const [tx, ty] = target;
+  const [ax, ay] = anchor;
+
+  if (shadow) {
+    defs.push(createDropShadow(`${id}-shadow`, 4, 0.25));
+  }
+  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+
+  // Dashed connector line from target to anchor
+  elements.push(`
+    <line x1="${tx}" y1="${ty}" x2="${ax}" y2="${ay}"
+          stroke="${c}" stroke-width="1.5" stroke-dasharray="6,3" stroke-linecap="round" opacity="0.6"/>
+  `);
+
+  // Small cross-hair at target
+  const ch = 8;
+  elements.push(`
+    <line x1="${tx - ch}" y1="${ty}" x2="${tx + ch}" y2="${ty}" stroke="${c}" stroke-width="1.5" opacity="0.7"/>
+    <line x1="${tx}" y1="${ty - ch}" x2="${tx}" y2="${ty + ch}" stroke="${c}" stroke-width="1.5" opacity="0.7"/>
+    <circle cx="${tx}" cy="${ty}" r="${ch + 2}" fill="none" stroke="${c}" stroke-width="1" opacity="0.5"/>
+  `);
+
+  // Magnifier circle border at anchor (content will be composited by Sharp)
+  elements.push(`
+    <circle cx="${ax}" cy="${ay}" r="${radius}" fill="none" stroke="${c}" stroke-width="${strokeWidth}" ${filterAttr}/>
+  `);
+
+  return { defs: defs.join('\n'), element: elements.join('\n') };
+}
+
 function adjustColor(hex, amount) {
   const num = parseInt(hex.replace('#', ''), 16);
   const r = Math.min(255, Math.max(0, (num >> 16) + amount));
@@ -901,6 +936,9 @@ function buildSvg(width, height, annotations, options = {}) {
       case 'spotlight':
         result = createSpotlight(mergedAnn);
         break;
+      case 'magnifier':
+        result = createMagnifier(mergedAnn);
+        break;
       default:
         log('WARN', `Unknown annotation type: ${annotation.type}`);
         continue;
@@ -959,6 +997,7 @@ module.exports = {
   createLeadout,
   createBracketLabel,
   createSpotlight,
+  createMagnifier,
   adjustColor,
   buildSvg
 };

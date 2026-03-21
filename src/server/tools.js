@@ -99,7 +99,7 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
             properties: {
               type: {
                 type: 'string',
-                enum: ['marker', 'arrow', 'curved-arrow', 'callout', 'rect', 'circle', 'label', 'highlight', 'blur', 'connector', 'icon', 'measure', 'leadout', 'bracket-label', 'spotlight'],
+                enum: ['marker', 'arrow', 'curved-arrow', 'callout', 'rect', 'circle', 'label', 'highlight', 'blur', 'connector', 'icon', 'measure', 'leadout', 'bracket-label', 'spotlight', 'magnifier'],
                 description: 'Annotation type'
               },
               x: { type: 'number', minimum: 0, description: 'X coordinate of the annotation anchor in image pixels.' },

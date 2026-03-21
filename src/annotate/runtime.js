@@ -131,6 +131,9 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
   const optimizedSvg = optimizeSvg(svg);
   const altText = generateAltText(validAnnotations, extendedWidth, extendedHeight, enhancedOptions);
 
+  // Extract magnifier annotations for Sharp compositing
+  const magnifierAnnotations = validAnnotations.filter(a => a.type === 'magnifier');
+
   if (outputFormat === 'svg') {
     try {
       const a11ySvg = injectA11y(optimizedSvg, altText, validAnnotations);
@@ -175,6 +178,44 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
       top: 0,
       left: 0
     }]);
+
+    // Composite magnifier zoomed regions
+    for (const mag of magnifierAnnotations) {
+      try {
+        const [tx, ty] = mag.target;
+        const [ax, ay] = mag.anchor;
+        const r = mag.radius || 60;
+        const zoom = mag.zoom || 2;
+        const sourceR = Math.round(r / zoom);
+        const extractLeft = Math.max(0, Math.round(tx - sourceR));
+        const extractTop = Math.max(0, Math.round(ty - sourceR));
+        const extractW = Math.min(width - extractLeft, sourceR * 2);
+        const extractH = Math.min(height - extractTop, sourceR * 2);
+        if (extractW > 0 && extractH > 0) {
+          const diameter = r * 2;
+          // Extract source region and resize to fill magnifier circle
+          const zoomed = await sharp(inputPath)
+            .extract({ left: extractLeft, top: extractTop, width: extractW, height: extractH })
+            .resize(diameter, diameter, { fit: 'cover' })
+            .toBuffer();
+          // Create circular mask
+          const circleMask = Buffer.from(
+            `<svg width="${diameter}" height="${diameter}"><circle cx="${r}" cy="${r}" r="${r}" fill="white"/></svg>`
+          );
+          const maskedZoomed = await sharp(zoomed)
+            .composite([{ input: circleMask, blend: 'dest-in' }])
+            .png()
+            .toBuffer();
+          pipeline = pipeline.composite([{
+            input: maskedZoomed,
+            top: Math.round(ay - r + (padding.top || 0)),
+            left: Math.round(ax - r + (padding.left || 0))
+          }]);
+        }
+      } catch (magErr) {
+        log('WARN', `Magnifier compositing failed: ${magErr.message}`);
+      }
+    }
 
     if (outputFormat === 'webp') {
       pipeline = pipeline.webp({ quality });
@@ -612,6 +653,16 @@ function getBoundingBox(annotation, sizePreset) {
       const r = annotation.radius || 60;
       return { x: annotation.x - r, y: annotation.y - r, w: r * 2, h: r * 2 };
     }
+    case 'magnifier': {
+      const [mtx, mty] = annotation.target || [0, 0];
+      const [max, may] = annotation.anchor || [0, 0];
+      const mr = annotation.radius || 60;
+      const minX = Math.min(mtx - 10, max - mr);
+      const minY = Math.min(mty - 10, may - mr);
+      const maxX = Math.max(mtx + 10, max + mr);
+      const maxY = Math.max(mty + 10, may + mr);
+      return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    }
     default:
       return null;
   }
@@ -680,6 +731,8 @@ function getAnnotationAriaLabel(annotation, index) {
       return `Bracket${annotation.text ? ` "${annotation.text}"` : ''} ${position}`;
     case 'spotlight':
       return `Spotlight ${position}`;
+    case 'magnifier':
+      return `Magnifier ${annotation.zoom || 2}x ${position}`;
     default:
       return `${annotation.type || 'annotation'} ${position}`;
   }
@@ -738,6 +791,11 @@ function validateAnnotation(annotation) {
   if (annotation.type === 'leadout') {
     if (!Array.isArray(annotation.target) || !Array.isArray(annotation.anchor)) {
       throw new ValidationError('leadout annotations require target and anchor coordinate arrays');
+    }
+  }
+  if (annotation.type === 'magnifier') {
+    if (!Array.isArray(annotation.target) || !Array.isArray(annotation.anchor)) {
+      throw new ValidationError('magnifier annotations require target and anchor coordinate arrays');
     }
   }
   if (annotation.type === 'spotlight') {
