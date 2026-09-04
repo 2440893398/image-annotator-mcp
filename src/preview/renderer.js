@@ -1,611 +1,87 @@
 /**
- * Shared annotation rendering utilities
- * Used by both config-ui and preview pages
+ * Preview adapter around the real annotation renderer.
+ *
+ * This file used to carry a hand-maintained copy of all 26 create* functions
+ * from src/annotate/render.js. Keeping them in sync by hand is what let the
+ * config UI preview render labels in Comic Sans while the exported image used
+ * Segoe UI, so the drawing code now lives in exactly one place and this module
+ * only adds what the preview genuinely needs on top:
+ *
+ *   - a padded viewBox so annotations near the edge are not clipped
+ *   - deterministic element ids, so re-rendering does not churn the DOM
+ *   - svgToDataUrl for <img>-based previews
+ *
+ * Loaded either by Node (require) or by the browser, where
+ * src/annotate/render.js must be included with a <script> tag first.
  */
 
-const COLORS = {
-  red: '#E53935', orange: '#FB8C00', yellow: '#FDD835', green: '#43A047',
-  blue: '#1E88E5', purple: '#8E24AA', pink: '#D81B60', cyan: '#00ACC1',
-  teal: '#00897B', white: '#FFFFFF', black: '#212121', gray: '#757575',
-  lightGray: '#E0E0E0', darkGray: '#424242', success: '#4CAF50',
-  warning: '#FF9800', error: '#F44336', info: '#2196F3',
-  primary: '#1976D2', secondary: '#7B1FA2', accent: '#FF4081'
-};
+const render = (typeof module !== 'undefined' && typeof require === 'function')
+  ? require('../annotate/render')
+  : (typeof globalThis !== 'undefined' ? globalThis.ImageAnnotatorRender : null);
 
-const HANDWRITING_FONT = "Comic Sans MS, Chalkboard SE, Patrick Hand, cursive";
-const CLEAN_FONT = "Segoe UI, Helvetica Neue, Arial, sans-serif";
-const TEXT_WIDTH_RATIO = 0.65;
-const CJK_REGEX = /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/;
-
-const EAST_ASIAN_WIDE_RANGES = [
-  [0x3000, 0x303f], [0x3040, 0x309f], [0x30a0, 0x30ff], [0x3100, 0x312f], [0x3130, 0x318f],
-  [0x3190, 0x31bf], [0x31c0, 0x31ef], [0x31f0, 0x321f], [0x3220, 0x3247], [0x3250, 0x32fe],
-  [0x3300, 0x33ff], [0x3400, 0x4dbf], [0x4e00, 0x9fff], [0xac00, 0xd7af], [0xf900, 0xfaff],
-  [0xff00, 0xffef], [0x20000, 0x2fffd], [0x30000, 0x3fffd]
-];
-
-// Size presets based on image dimensions (synced with annotate.js Phase 1 R2)
-const SIZE_PRESETS = {
-  xs: { markerSize: 20, strokeWidth: 3, fontSize: 12 },   // < 400px
-  s:  { markerSize: 24, strokeWidth: 4, fontSize: 14 },   // 400-800px
-  m:  { markerSize: 32, strokeWidth: 5, fontSize: 18 },   // 800-1200px (default)
-  l:  { markerSize: 40, strokeWidth: 6, fontSize: 22 },   // 1200-1920px
-  xl: { markerSize: 48, strokeWidth: 8, fontSize: 28 }    // > 1920px
-};
-
-/**
- * Get size preset based on image dimensions (2D aspect ratio algorithm)
- * Synced with annotate.js getSizePreset — Phase 1 R2
- */
-function getSizePreset(imageWidth, imageHeight = imageWidth) {
-  const presetNames = ['xs', 's', 'm', 'l', 'xl'];
-  let presetIndex;
-
-  if (imageWidth < 400) {
-    presetIndex = 0;
-  } else if (imageWidth < 800) {
-    presetIndex = 1;
-  } else if (imageWidth < 1200) {
-    presetIndex = 2;
-  } else if (imageWidth <= 1920) {
-    presetIndex = 3;
-  } else {
-    presetIndex = 4;
-  }
-
-  const aspectRatio = imageWidth / imageHeight;
-  if (aspectRatio < 0.5) {
-    presetIndex += 1;
-  } else if (aspectRatio > 3) {
-    presetIndex -= 1;
-  }
-
-  const clampedIndex = Math.max(0, Math.min(presetNames.length - 1, presetIndex));
-  return presetNames[clampedIndex];
+if (!render) {
+  throw new Error('image-annotator: load src/annotate/render.js before src/preview/renderer.js');
 }
 
-function isEastAsianWide(codepoint) {
-  if (typeof codepoint !== 'number' || codepoint < 0) return false;
-  for (let i = 0; i < EAST_ASIAN_WIDE_RANGES.length; i++) {
-    const [lo, hi] = EAST_ASIAN_WIDE_RANGES[i];
-    if (codepoint >= lo && codepoint <= hi) return true;
-  }
-  return false;
-}
-
-function getTextContentWidthPx(line, fontSize) {
-  if (!line || typeof line !== 'string') return 0;
-  let totalEm = 0;
-  for (let i = 0; i < line.length; i++) {
-    const cp = line.codePointAt(i);
-    totalEm += isEastAsianWide(cp) ? 1 : 0.5;
-    if (cp > 0xffff) i++;
-  }
-  return totalEm * fontSize;
-}
-
-function getLabelTextWidthRatio(text) {
-  return CJK_REGEX.test(text) ? 1.0 : TEXT_WIDTH_RATIO;
-}
-
-let idCounter = 0;
-let buildNamespace = '';
-
-function generateId(prefix = 'ann') {
-  const ns = buildNamespace ? buildNamespace + '-' : '';
-  return `${ns}${prefix}-${Date.now()}-${idCounter++}`;
-}
-
-function escapeXml(text) {
-  if (typeof text !== 'string') return String(text);
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-}
-
-function getColor(color) {
-  return COLORS[color] || color || COLORS.red;
-}
-
-function adjustColor(hex, amount) {
-  const num = parseInt(hex.replace('#', ''), 16);
-  const r = Math.min(255, Math.max(0, (num >> 16) + amount));
-  const g = Math.min(255, Math.max(0, ((num >> 8) & 0x00FF) + amount));
-  const b = Math.min(255, Math.max(0, (num & 0x0000FF) + amount));
-  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
-}
-
-function createDropShadow(id, blur = 4, opacity = 0.3) {
-  return `<filter id="${id}" filterUnits="userSpaceOnUse" x="-50" y="-50" width="400" height="300">
-    <feDropShadow dx="2" dy="2" stdDeviation="${blur}" flood-opacity="${opacity}"/></filter>`;
-}
-
-function createMarker({ x, y, number, color = 'red', size = 32, shadow = true, style = 'filled' }) {
-  const c = getColor(color);
-  const id = generateId('marker');
-  const defs = [];
-  const elements = [];
-
-  if (shadow) defs.push(createDropShadow(`${id}-shadow`));
-
-  const gradientId = `${id}-gradient`;
-  defs.push(`<linearGradient id="${gradientId}" x1="0%" y1="0%" x2="0%" y2="100%">
-    <stop offset="0%" style="stop-color:${c};stop-opacity:1" />
-    <stop offset="100%" style="stop-color:${adjustColor(c, -30)};stop-opacity:1" /></linearGradient>`);
-
-  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
-
-  if (style === 'filled') {
-    elements.push(`<circle cx="${x}" cy="${y}" r="${size}" fill="url(#${gradientId})" ${filterAttr}/>
-      <circle cx="${x}" cy="${y}" r="${size - 2}" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
-      <text x="${x}" y="${y + size * 0.35}" text-anchor="middle" fill="white"
-        font-size="${size * 0.9}" font-weight="bold" font-family="Arial">${number}</text>`);
-  } else if (style === 'outline') {
-    elements.push(`<circle cx="${x}" cy="${y}" r="${size}" fill="white" stroke="${c}" stroke-width="3" ${filterAttr}/>
-      <text x="${x}" y="${y + size * 0.35}" text-anchor="middle" fill="${c}"
-        font-size="${size * 0.9}" font-weight="bold" font-family="Arial">${number}</text>`);
-  } else if (style === 'badge') {
-    const isMultiDigit = number > 9;
-    const width = isMultiDigit ? size * 2.4 : size * 2;
-    const height = size * 2;
-    elements.push(`<rect x="${x - width / 2}" y="${y - height / 2}" width="${width}" height="${height}"
-      rx="${height / 2}" fill="url(#${gradientId})" ${filterAttr}/>
-      <text x="${x}" y="${y + size * 0.35}" text-anchor="middle" fill="white"
-        font-size="${size * 0.9}" font-weight="bold" font-family="Arial">${number}</text>`);
-  }
-
-  return { defs: defs.join('\n'), element: elements.join('\n') };
-}
-
-function createArrow({ from, to, color = 'red', strokeWidth = 2, style = 'solid', headStyle = 'filled', shadow = true }) {
-  const c = getColor(color);
-  const [x1, y1] = from;
-  const [x2, y2] = to;
-  const id = generateId('arrow');
-  const defs = [];
-
-  if (shadow) defs.push(createDropShadow(`${id}-shadow`, 2, 0.2));
-
-  const headSize = Math.max(10, strokeWidth * 3);
-  if (headStyle === 'filled') {
-    defs.push(`<marker id="${id}-head" markerWidth="${headSize}" markerHeight="${headSize * 0.7}"
-      refX="${headSize - 1}" refY="${headSize * 0.35}" orient="auto" markerUnits="userSpaceOnUse">
-      <polygon points="0 0, ${headSize} ${headSize * 0.35}, 0 ${headSize * 0.7}" fill="${c}"/></marker>`);
-  } else {
-    defs.push(`<marker id="${id}-head" markerWidth="${headSize}" markerHeight="${headSize * 0.7}"
-      refX="${headSize - 1}" refY="${headSize * 0.35}" orient="auto" markerUnits="userSpaceOnUse">
-      <polyline points="0 0, ${headSize} ${headSize * 0.35}, 0 ${headSize * 0.7}"
-        fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round"/></marker>`);
-  }
-
-  const dashArray = style === 'dashed' ? 'stroke-dasharray="10,5"' : '';
-  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
-
-  return { defs: defs.join('\n'), element: `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
-    stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"
-    marker-end="url(#${id}-head)" ${dashArray} ${filterAttr}/>` };
-}
-
-function createCurvedArrow({ from, to, curve = 50, color = 'red', strokeWidth = 2, headStyle = 'filled', shadow = true }) {
-  const c = getColor(color);
-  const [x1, y1] = from;
-  const [x2, y2] = to;
-  const id = generateId('curved-arrow');
-  const defs = [];
-
-  const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
-  const dx = x2 - x1, dy = y2 - y1;
-  const len = Math.sqrt(dx * dx + dy * dy) || 1;
-  const nx = -dy / len, ny = dx / len;
-  const cx = midX + nx * curve, cy = midY + ny * curve;
-
-  if (shadow) defs.push(createDropShadow(`${id}-shadow`, 2, 0.2));
-
-  const headSize = Math.max(10, strokeWidth * 3);
-  defs.push(`<marker id="${id}-head" markerWidth="${headSize}" markerHeight="${headSize * 0.7}"
-    refX="${headSize - 1}" refY="${headSize * 0.35}" orient="auto" markerUnits="userSpaceOnUse">
-    <polygon points="0 0, ${headSize} ${headSize * 0.35}, 0 ${headSize * 0.7}" fill="${c}"/></marker>`);
-
-  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
-
-  return { defs: defs.join('\n'), element: `<path d="M${x1},${y1} Q${cx},${cy} ${x2},${y2}"
-    fill="none" stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"
-    marker-end="url(#${id}-head)" ${filterAttr}/>` };
-}
-
-function createCallout({ x, y, text, color = 'primary', background = 'white', width = null, pointer = 'bottom', fontSize = 18, shadow = true, handwriting = true }) {
-  const borderColor = getColor(color);
-  const bgColor = getColor(background);
-  const id = generateId('callout');
-  const defs = [];
-  const fontFamily = handwriting ? HANDWRITING_FONT : CLEAN_FONT;
-
-  const padding = 14;
-  const lineHeight = fontSize * 1.5;
-  const lines = text.split('\n');
-  const contentWidth = Math.max(0, ...lines.map(l => getTextContentWidthPx(l, fontSize)));
-  const textWidth = width || contentWidth + padding * 2;
-  const textHeight = lines.length * lineHeight + padding * 2;
-
-  if (shadow) defs.push(createDropShadow(`${id}-shadow`, 4, 0.15));
-  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
-
-  let boxX, boxY, pointerPath;
-  const pointerSize = 12;
-
-  switch (pointer) {
-    case 'top':
-      boxX = x - textWidth / 2; boxY = y + pointerSize;
-      pointerPath = `M${x - pointerSize},${y + pointerSize} L${x},${y} L${x + pointerSize},${y + pointerSize}`;
-      break;
-    case 'bottom':
-      boxX = x - textWidth / 2; boxY = y - textHeight - pointerSize;
-      pointerPath = `M${x - pointerSize},${y - pointerSize} L${x},${y} L${x + pointerSize},${y - pointerSize}`;
-      break;
-    case 'left':
-      boxX = x + pointerSize; boxY = y - textHeight / 2;
-      pointerPath = `M${x + pointerSize},${y - pointerSize} L${x},${y} L${x + pointerSize},${y + pointerSize}`;
-      break;
-    case 'right':
-      boxX = x - textWidth - pointerSize; boxY = y - textHeight / 2;
-      pointerPath = `M${x - pointerSize},${y - pointerSize} L${x},${y} L${x - pointerSize},${y + pointerSize}`;
-      break;
-    default:
-      boxX = x; boxY = y; pointerPath = '';
-  }
-
-  const textY = boxY + padding + lineHeight / 2;
-  const textElements = lines.map((line, i) =>
-    `<tspan x="${boxX + padding}" dy="${i === 0 ? 0 : lineHeight}">${escapeXml(line)}</tspan>`
-  ).join('');
-
-  return { defs: defs.join('\n'), element: `<g ${filterAttr}>
-    <rect x="${boxX}" y="${boxY}" width="${textWidth}" height="${textHeight}"
-      rx="10" fill="${bgColor}" stroke="${borderColor}" stroke-width="3" stroke-linejoin="round"/>
-    ${pointerPath ? `<path d="${pointerPath}" fill="${bgColor}" stroke="${borderColor}" stroke-width="3" stroke-linejoin="round"/>` : ''}
-    <text x="${boxX + padding}" y="${textY}" dominant-baseline="middle"
-      fill="${getColor('darkGray')}" font-size="${fontSize}" font-family="${fontFamily}" font-weight="600">
-      ${textElements}</text></g>` };
-}
-
-function createRect({ x, y, width, height, color = 'red', strokeWidth = 4, fill = 'none', cornerRadius = 12, style = 'solid', shadow = false }) {
-  const c = getColor(color);
-  const fillColor = fill === 'none' ? 'none' : getColor(fill);
-  const id = generateId('rect');
-  const defs = [];
-
-  if (shadow) defs.push(createDropShadow(`${id}-shadow`));
-
-  const dashArray = style === 'dashed' ? 'stroke-dasharray="12,6"' : '';
-  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
-
-  return { defs: defs.join('\n'), element: `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${cornerRadius}"
-    fill="${fillColor}" stroke="${c}" stroke-width="${strokeWidth}" stroke-linejoin="round" ${dashArray} ${filterAttr}/>` };
-}
-
-function createCircle({ x, y, radius = 30, color = 'red', strokeWidth = 4, fill = 'none', style = 'solid', shadow = false }) {
-  const c = getColor(color);
-  const fillColor = fill === 'none' ? 'none' : getColor(fill);
-  const id = generateId('circle');
-  const defs = [];
-
-  if (shadow) defs.push(createDropShadow(`${id}-shadow`));
-
-  const dashArray = style === 'dashed' ? 'stroke-dasharray="8,4"' : '';
-  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
-
-  return { defs: defs.join('\n'), element: `<circle cx="${x}" cy="${y}" r="${radius}"
-    fill="${fillColor}" stroke="${c}" stroke-width="${strokeWidth}" ${dashArray} ${filterAttr}/>` };
-}
-
-function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight = '600', background = 'white', padding = 10, cornerRadius = 8, shadow = true, handwriting = true }) {
-  const textColor = getColor(color);
-  const id = generateId('label');
-  const defs = [];
-  const elements = [];
-  const fontFamily = handwriting ? HANDWRITING_FONT : CLEAN_FONT;
-
-  const lines = text.split('\n');
-  const lineHeight = fontSize * 1.3;
-  const textWidth = Math.max(0, ...lines.map(l => getTextContentWidthPx(l, fontSize)));
-  const textHeight = lines.length * lineHeight;
-
-  if (shadow && background) defs.push(createDropShadow(`${id}-shadow`, 4, 0.2));
-  const filterAttr = (shadow && background) ? `filter="url(#${id}-shadow)"` : '';
-
-  if (background) {
-    const bgColor = getColor(background);
-    elements.push(`<rect x="${x - padding}" y="${y - textHeight - padding + 4}"
-      width="${textWidth + padding * 2}" height="${textHeight + padding * 2}"
-      rx="${cornerRadius}" fill="${bgColor}" stroke="${textColor}" stroke-width="2" stroke-linejoin="round" ${filterAttr}/>`);
-  }
-
-  const textElements = lines.map((line, i) =>
-    `<tspan x="${x}" dy="${i === 0 ? 0 : lineHeight}">${escapeXml(line)}</tspan>`
-  ).join('');
-  elements.push(`<text x="${x}" y="${y}" fill="${textColor}" font-size="${fontSize}"
-    font-weight="${fontWeight}" font-family="${fontFamily}">${textElements}</text>`);
-
-  return { defs: defs.join('\n'), element: elements.join('\n') };
-}
-
-function createHighlight({ x, y, width, height, color = 'yellow', opacity = 0.35, cornerRadius = 0 }) {
-  const c = getColor(color);
-  return { defs: '', element: `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${cornerRadius}" fill="${c}" opacity="${opacity}"/>` };
-}
-
-function createBlur({ x, y, width, height, intensity = 8 }) {
-  const id = generateId('blur');
-  return { defs: `<filter id="${id}"><feGaussianBlur stdDeviation="${intensity}"/></filter>`,
-    element: `<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="#808080" filter="url(#${id})"/>` };
-}
-
-function createConnector({ from, to, color = 'gray', strokeWidth = 2, style = 'dashed' }) {
-  const c = getColor(color);
-  const [x1, y1] = from, [x2, y2] = to;
-  const dashArray = style === 'dashed' ? 'stroke-dasharray="8,5"' : '';
-  return { defs: '', element: `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" ${dashArray}/>` };
-}
-
-function createIcon({ x, y, icon, color = 'green', size = 28, shadow = true }) {
-  const c = getColor(color);
-  const id = generateId('icon');
-  const defs = [];
-  if (shadow) defs.push(createDropShadow(`${id}-shadow`));
-  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
-
-  let iconPath;
-  switch (icon) {
-    case 'check': case 'checkmark':
-      iconPath = `<path d="M${x - size * 0.3},${y} L${x - size * 0.1},${y + size * 0.25} L${x + size * 0.35},${y - size * 0.25}" fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>`;
-      break;
-    case 'x': case 'cross':
-      iconPath = `<line x1="${x - size * 0.2}" y1="${y - size * 0.2}" x2="${x + size * 0.2}" y2="${y + size * 0.2}" stroke="white" stroke-width="4" stroke-linecap="round"/>
-        <line x1="${x + size * 0.2}" y1="${y - size * 0.2}" x2="${x - size * 0.2}" y2="${y + size * 0.2}" stroke="white" stroke-width="4" stroke-linecap="round"/>`;
-      break;
-    case 'warning': case '!':
-      iconPath = `<line x1="${x}" y1="${y - size * 0.15}" x2="${x}" y2="${y + size * 0.05}" stroke="white" stroke-width="4" stroke-linecap="round"/>
-        <circle cx="${x}" cy="${y + size * 0.25}" r="3" fill="white"/>`;
-      break;
-    case 'info': case 'i':
-      iconPath = `<circle cx="${x}" cy="${y - size * 0.2}" r="3" fill="white"/>
-        <line x1="${x}" y1="${y - size * 0.05}" x2="${x}" y2="${y + size * 0.25}" stroke="white" stroke-width="4" stroke-linecap="round"/>`;
-      break;
-    case 'question': case '?':
-      iconPath = `<path d="M${x - size * 0.15},${y - size * 0.25} Q${x - size * 0.15},${y - size * 0.4} ${x},${y - size * 0.4} Q${x + size * 0.2},${y - size * 0.4} ${x + size * 0.2},${y - size * 0.2} Q${x + size * 0.2},${y - size * 0.05} ${x},${y}" fill="none" stroke="white" stroke-width="3.5" stroke-linecap="round"/>
-        <circle cx="${x}" cy="${y + size * 0.2}" r="3" fill="white"/>`;
-      break;
-    default: iconPath = '';
-  }
-
-  return { defs: defs.join('\n'), element: `<g ${filterAttr}><circle cx="${x}" cy="${y}" r="${size}" fill="${c}"/>${iconPath}</g>` };
-}
-
-function createMeasure({ from, to, text, color = 'red', fontSize = 16, strokeWidth = 2, shadow = true }) {
-  const c = getColor(color);
-  const id = generateId('measure');
-  const defs = [];
-  const elements = [];
-  const [x1, y1] = from;
-  const [x2, y2] = to;
-
-  if (shadow) defs.push(createDropShadow(`${id}-shadow`, 2, 0.15));
-  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
-
-  const dx = x2 - x1, dy = y2 - y1;
-  const len = Math.sqrt(dx * dx + dy * dy) || 1;
-  const nx = -dy / len, ny = dx / len;
-  const tickLen = 10;
-
-  elements.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" ${filterAttr}/>`);
-  elements.push(`<line x1="${x1 + nx * tickLen}" y1="${y1 + ny * tickLen}" x2="${x1 - nx * tickLen}" y2="${y1 - ny * tickLen}" stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round"/>`);
-  elements.push(`<line x1="${x2 + nx * tickLen}" y1="${y2 + ny * tickLen}" x2="${x2 - nx * tickLen}" y2="${y2 - ny * tickLen}" stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round"/>`);
-
-  const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
-  const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-  const textAngle = (angle > 90 || angle < -90) ? angle + 180 : angle;
-  const textW = getTextContentWidthPx(text, fontSize) + 12;
-  const textH = fontSize * 1.4;
-
-  elements.push(`<g transform="translate(${midX}, ${midY}) rotate(${textAngle})">
-    <rect x="${-textW / 2}" y="${-textH / 2}" width="${textW}" height="${textH}" rx="4" fill="white" stroke="${c}" stroke-width="1.5"/>
-    <text x="0" y="${fontSize * 0.35}" text-anchor="middle" fill="${c}" font-size="${fontSize}" font-weight="700" font-family="${CLEAN_FONT}">${escapeXml(text)}</text>
-  </g>`);
-
-  return { defs: defs.join('\n'), element: elements.join('\n') };
-}
-
-function createLeadout({ target, anchor, text, color = 'red', fontSize = 16, strokeWidth = 2, shadow = true }) {
-  const c = getColor(color);
-  const id = generateId('leadout');
-  const defs = [];
-  const elements = [];
-  const [tx, ty] = target;
-  const [ax, ay] = anchor;
-
-  if (shadow) defs.push(createDropShadow(`${id}-shadow`, 3, 0.2));
-  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
-
-  elements.push(`<circle cx="${tx}" cy="${ty}" r="5" fill="${c}"/>`);
-  elements.push(`<line x1="${tx}" y1="${ty}" x2="${ax}" y2="${ay}" stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round"/>`);
-
-  const padding = 10;
-  const textW = getTextContentWidthPx(text, fontSize) + padding * 2;
-  const textH = fontSize * 1.4 + padding;
-  const boxX = ax - textW / 2, boxY = ay - textH / 2;
-
-  elements.push(`<g ${filterAttr}>
-    <rect x="${boxX}" y="${boxY}" width="${textW}" height="${textH}" rx="8" fill="white" stroke="${c}" stroke-width="2" stroke-linejoin="round"/>
-    <text x="${ax}" y="${ay + fontSize * 0.35 - textH * 0.05}" text-anchor="middle" fill="${c}" font-size="${fontSize}" font-weight="700" font-family="${CLEAN_FONT}">${escapeXml(text)}</text>
-  </g>`);
-
-  return { defs: defs.join('\n'), element: elements.join('\n') };
-}
-
-function createBracketLabel({ from, to, direction = 'right', text, color = 'red', fontSize = 16, strokeWidth = 2, shadow = true }) {
-  const c = getColor(color);
-  const id = generateId('bracket');
-  const defs = [];
-  const elements = [];
-  const [x1, y1] = from;
-  const [x2, y2] = to;
-
-  if (shadow) defs.push(createDropShadow(`${id}-shadow`, 2, 0.15));
-  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
-
-  const bracketDepth = 20;
-  const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
-  let bracketPath, labelX, labelY;
-
-  switch (direction) {
-    case 'right':
-      bracketPath = `M${x1},${y1} L${x1 + bracketDepth},${y1} L${x1 + bracketDepth},${midY} L${x1 + bracketDepth + 10},${midY} M${x1 + bracketDepth},${midY} L${x1 + bracketDepth},${y2} L${x1},${y2}`;
-      labelX = x1 + bracketDepth + 16; labelY = midY; break;
-    case 'left':
-      bracketPath = `M${x1},${y1} L${x1 - bracketDepth},${y1} L${x1 - bracketDepth},${midY} L${x1 - bracketDepth - 10},${midY} M${x1 - bracketDepth},${midY} L${x1 - bracketDepth},${y2} L${x1},${y2}`;
-      labelX = x1 - bracketDepth - 16; labelY = midY; break;
-    case 'bottom':
-      bracketPath = `M${x1},${y1} L${x1},${y1 + bracketDepth} L${midX},${y1 + bracketDepth} L${midX},${y1 + bracketDepth + 10} M${midX},${y1 + bracketDepth} L${x2},${y1 + bracketDepth} L${x2},${y1}`;
-      labelX = midX; labelY = y1 + bracketDepth + 20; break;
-    case 'top': default:
-      bracketPath = `M${x1},${y1} L${x1},${y1 - bracketDepth} L${midX},${y1 - bracketDepth} L${midX},${y1 - bracketDepth - 10} M${midX},${y1 - bracketDepth} L${x2},${y1 - bracketDepth} L${x2},${y1}`;
-      labelX = midX; labelY = y1 - bracketDepth - 20; break;
-  }
-
-  const textAnchor = direction === 'left' ? 'end' : (direction === 'right' ? 'start' : 'middle');
-  elements.push(`<path d="${bracketPath}" fill="none" stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" ${filterAttr}/>`);
-  elements.push(`<text x="${labelX}" y="${labelY + fontSize * 0.35}" text-anchor="${textAnchor}" fill="${c}" font-size="${fontSize}" font-weight="700" font-family="${CLEAN_FONT}">${escapeXml(text)}</text>`);
-
-  return { defs: defs.join('\n'), element: elements.join('\n') };
-}
-
-function createSpotlight({ x, y, radius, width: spotWidth, height: spotHeight, color = 'primary', strokeWidth = 2, opacity = 0.5 }) {
-  const c = getColor(color);
-  const id = generateId('spotlight');
-  const defs = [];
-  const elements = [];
-  const maskId = `${id}-mask`;
-  const useRect = spotWidth && spotHeight;
-
-  if (useRect) {
-    defs.push(`<mask id="${maskId}"><rect x="0" y="0" width="100%" height="100%" fill="white"/><rect x="${x - spotWidth / 2}" y="${y - spotHeight / 2}" width="${spotWidth}" height="${spotHeight}" rx="8" fill="black"/></mask>`);
-    elements.push(`<rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,${opacity})" mask="url(#${maskId})"/>`);
-    elements.push(`<rect x="${x - spotWidth / 2}" y="${y - spotHeight / 2}" width="${spotWidth}" height="${spotHeight}" rx="8" fill="none" stroke="${c}" stroke-width="${strokeWidth}"/>`);
-  } else {
-    const r = radius || 60;
-    defs.push(`<mask id="${maskId}"><rect x="0" y="0" width="100%" height="100%" fill="white"/><circle cx="${x}" cy="${y}" r="${r}" fill="black"/></mask>`);
-    elements.push(`<rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,${opacity})" mask="url(#${maskId})"/>`);
-    elements.push(`<circle cx="${x}" cy="${y}" r="${r}" fill="none" stroke="${c}" stroke-width="${strokeWidth}"/>`);
-  }
-
-  return { defs: defs.join('\n'), element: elements.join('\n') };
-}
-
-function createMagnifier({ target, anchor, radius = 60, zoom = 2, borderColor = 'primary', strokeWidth = 2, shadow = true }) {
-  const c = getColor(borderColor);
-  const id = generateId('magnifier');
-  const defs = [];
-  const elements = [];
-  const [tx, ty] = target;
-  const [ax, ay] = anchor;
-
-  if (shadow) defs.push(createDropShadow(`${id}-shadow`, 4, 0.25));
-  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
-
-  // Arrow head for the connector line
-  const headSize = 8;
-  defs.push(`<marker id="${id}-head" markerWidth="${headSize}" markerHeight="${headSize * 0.7}"
-      refX="${headSize - 1}" refY="${headSize * 0.35}" orient="auto" markerUnits="userSpaceOnUse">
-      <polygon points="0 0, ${headSize} ${headSize * 0.35}, 0 ${headSize * 0.7}" fill="${c}"/></marker>`);
-
-  // Connector line from anchor to target
-  elements.push(`<line x1="${ax}" y1="${ay}" x2="${tx}" y2="${ty}" stroke="${c}" stroke-width="2" stroke-linecap="round" opacity="0.8" marker-end="url(#${id}-head)"/>`);
-
-  // Small cross-hair at target
-  const ch = 8;
-  elements.push(`<line x1="${tx - ch}" y1="${ty}" x2="${tx + ch}" y2="${ty}" stroke="${c}" stroke-width="1.5" opacity="0.7"/>`);
-  elements.push(`<line x1="${tx}" y1="${ty - ch}" x2="${tx}" y2="${ty + ch}" stroke="${c}" stroke-width="1.5" opacity="0.7"/>`);
-  elements.push(`<circle cx="${tx}" cy="${ty}" r="${ch + 2}" fill="none" stroke="${c}" stroke-width="1" opacity="0.5"/>`);
-
-  // Magnifier circle at anchor (in preview, we just show a placeholder circle with zoom label)
-  elements.push(`<circle cx="${ax}" cy="${ay}" r="${radius}" fill="rgba(200,200,200,0.3)" stroke="${c}" stroke-width="${strokeWidth}" ${filterAttr}/>`);
-  elements.push(`<text x="${ax}" y="${ay + 6}" text-anchor="middle" fill="${c}" font-size="14" font-weight="700" font-family="${CLEAN_FONT}">${zoom}x</text>`);
-
-  return { defs: defs.join('\n'), element: elements.join('\n') };
-}
-
-function buildSvg(width, height, annotations, namespace = '') {
-  idCounter = 0;
-  buildNamespace = namespace || '';
-  const defs = [], elements = [];
-
-  for (const ann of annotations) {
-    let result;
-    switch (ann.type) {
-      case 'marker': case 'number': result = createMarker(ann); break;
-      case 'arrow': result = createArrow(ann); break;
-      case 'curved-arrow': case 'curvedArrow': result = createCurvedArrow(ann); break;
-      case 'callout': result = createCallout(ann); break;
-      case 'rect': case 'rectangle': case 'box': result = createRect(ann); break;
-      case 'circle': result = createCircle(ann); break;
-      case 'label': case 'text': result = createLabel(ann); break;
-      case 'highlight': result = createHighlight(ann); break;
-      case 'blur': result = createBlur(ann); break;
-      case 'connector': case 'line': result = createConnector(ann); break;
-      case 'icon': result = createIcon(ann); break;
-      case 'measure': result = createMeasure(ann); break;
-      case 'leadout': result = createLeadout(ann); break;
-      case 'bracket-label': case 'bracketLabel': result = createBracketLabel(ann); break;
-      case 'spotlight': result = createSpotlight(ann); break;
-      case 'magnifier': result = createMagnifier(ann); break;
-      default: console.warn(`Unknown annotation type: ${ann.type}`); continue;
-    }
-    if (result) {
-      if (result.defs) defs.push(result.defs);
-      if (result.element) elements.push(result.element);
-    }
-  }
-
-  buildNamespace = '';
-  const pad = 20;
-  const vx = -pad;
-  const vy = -pad;
-  const vw = width + pad * 2;
-  const vh = height + pad * 2;
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<svg width="${width}" height="${height}" viewBox="${vx} ${vy} ${vw} ${vh}" xmlns="http://www.w3.org/2000/svg">
-  <defs>${defs.join('\n')}</defs>
-  <g transform="translate(${pad}, ${pad})">${elements.join('\n')}</g>
-</svg>`;
-}
+// Extra room around the artwork so shadows and edge markers stay visible.
+const PREVIEW_PADDING = 20;
 
 function svgToDataUrl(svg) {
   return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
 }
 
-// Export for both browser and Node.js
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    COLORS,
-    SIZE_PRESETS,
-    getColor,
-    getSizePreset,
-    buildSvg,
-    svgToDataUrl,
-    createMarker,
-    createArrow,
-    createCurvedArrow,
-    createCallout,
-    createRect,
-    createCircle,
-    createLabel,
-    createHighlight,
-    createBlur,
-    createConnector,
-    createIcon,
-    createMeasure,
-    createLeadout,
-    createBracketLabel,
-    createSpotlight,
-    createMagnifier
-  };
+/**
+ * Build a preview SVG for the given annotations.
+ *
+ * @param {number} width - Artwork width in pixels.
+ * @param {number} height - Artwork height in pixels.
+ * @param {Array<object>} annotations - Annotations in the annotate_screenshot format.
+ * @param {string|object} [namespaceOrOptions] - An id namespace, or the same
+ *   options object render.buildSvg accepts plus a `namespace` key.
+ * @returns {string} SVG document
+ */
+function buildSvg(width, height, annotations, namespaceOrOptions = '') {
+  const options = typeof namespaceOrOptions === 'string'
+    ? { namespace: namespaceOrOptions }
+    : (namespaceOrOptions || {});
+  const prefix = options.namespace ? options.namespace + '-' : '';
+
+  let counter = 0;
+  render.setIdGenerator((idPrefix) => prefix + idPrefix + '-' + (counter++));
+
+  let parts;
+  try {
+    // preview:true makes pixelate/blur redact regions render an approximate
+    // placeholder. In the real pipeline they are pixel operations on the base
+    // image, which the preview has no way to perform.
+    parts = render.buildSvgParts(annotations, { ...options, preview: true });
+  } finally {
+    render.resetIdGenerator();
+  }
+
+  const pad = PREVIEW_PADDING;
+  const nl = String.fromCharCode(10);
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<svg width="${width}" height="${height}" viewBox="${-pad} ${-pad} ${width + pad * 2} ${height + pad * 2}" xmlns="http://www.w3.org/2000/svg">`,
+    `  <defs>${parts.defs.join(nl)}</defs>`,
+    `  <g transform="translate(${pad}, ${pad})">${parts.elements.join(nl)}</g>`,
+    '</svg>'
+  ].join(nl);
+}
+
+const previewApi = Object.assign({}, render, {
+  buildSvg,
+  buildSvgDocument: render.buildSvg,
+  svgToDataUrl,
+  PREVIEW_PADDING
+});
+
+if (typeof module !== 'undefined' && typeof module.exports === 'object') {
+  module.exports = previewApi;
+}
+if (typeof globalThis !== 'undefined') {
+  globalThis.ImageAnnotatorPreview = previewApi;
+  // config-ui/public/preview.js calls buildSvg/getColor/THEMES as bare globals.
+  Object.assign(globalThis, previewApi);
 }

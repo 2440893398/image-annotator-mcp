@@ -1,7 +1,41 @@
-const crypto = require('crypto');
+﻿// This module is loaded both by Node (require) and directly by the config UI and
+// examples pages via <script>, so it must not assume either host is present.
+const isCommonJs = typeof module !== 'undefined' && typeof module.exports === 'object';
+const nodeCrypto = isCommonJs && typeof require === 'function' ? require('crypto') : null;
+const annotateErrors = isCommonJs && typeof require === 'function' ? require('../annotate-errors') : null;
 
 function log(level, message) {
-  process.stderr.write(`[image-annotator] ${level.toUpperCase()}: ${message}\n`);
+  const line = '[image-annotator] ' + String(level).toUpperCase() + ': ' + message;
+  if (typeof process !== 'undefined' && process.stderr && typeof process.stderr.write === 'function') {
+    process.stderr.write(line + String.fromCharCode(10));
+  } else if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+    console.warn(line);
+  }
+}
+
+function randomHex(byteLength) {
+  if (nodeCrypto && typeof nodeCrypto.randomBytes === 'function') {
+    return nodeCrypto.randomBytes(byteLength).toString('hex');
+  }
+  const webCrypto = typeof globalThis !== 'undefined' ? globalThis.crypto : null;
+  if (webCrypto && typeof webCrypto.getRandomValues === 'function') {
+    const bytes = new Uint8Array(byteLength);
+    webCrypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  let out = '';
+  for (let i = 0; i < byteLength; i++) {
+    out += Math.floor(Math.random() * 256).toString(16).padStart(2, '0');
+  }
+  return out;
+}
+
+function invalidParameter(message, param) {
+  if (annotateErrors) return new annotateErrors.InvalidParameterError(message, param);
+  const error = new Error(message);
+  error.code = 'INVALID_PARAMETER';
+  error.param = param;
+  return error;
 }
 
 const THEME_FONTS = {
@@ -120,8 +154,6 @@ function getSizePreset(imageWidth, imageHeight = imageWidth) {
   return presetNames[clampedIndex];
 }
 
-const TEXT_WIDTH_RATIO = 0.65;
-const CJK_REGEX = /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/;
 const EAST_ASIAN_WIDE_RANGES = [
   [0x3000, 0x303f],
   [0x3040, 0x309f],
@@ -163,10 +195,6 @@ function getTextContentWidthPx(line, fontSize) {
   return totalEm * fontSize;
 }
 
-function getLabelTextWidthRatio(text) {
-  return CJK_REGEX.test(text) ? 1.0 : TEXT_WIDTH_RATIO;
-}
-
 const DEFAULT_PADDING = 14;
 const LINE_HEIGHT_RATIO = 1.5;
 
@@ -180,8 +208,30 @@ function escapeXml(text) {
     .replace(/'/g, '&apos;');
 }
 
+// Colour values are interpolated straight into SVG attributes, so anything that
+// is not a named preset has to be shape-checked before it is let through.
+// Accepts #rgb/#rgba/#rrggbb/#rrggbbaa, rgb()/rgba()/hsl()/hsla(), the CSS-wide
+// keywords, and bare colour names such as "rebeccapurple" or "none".
+const SAFE_COLOR_PATTERN = /^(?:#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|(?:rgb|hsl)a?\([0-9\s.,%/-]+\)|[a-z]+)$/i;
+
 function getColor(color) {
-  return COLORS[color] || color || COLORS.red;
+  if (typeof color === 'string' && Object.prototype.hasOwnProperty.call(COLORS, color)) {
+    return COLORS[color];
+  }
+  if (typeof color === 'string' && SAFE_COLOR_PATTERN.test(color)) {
+    return color;
+  }
+  if (color !== undefined && color !== null && color !== '') {
+    log('WARN', `Ignoring unsafe color value ${JSON.stringify(String(color))}, falling back to red.`);
+  }
+  return COLORS.red;
+}
+
+// font-family values are caller-supplied strings that land inside an attribute.
+function getFontFamily(font, handwriting) {
+  if (typeof font === 'string' && font) return escapeXml(font);
+  if (handwriting === true) return HANDWRITING_FONT;
+  return CLEAN_FONT;
 }
 
 let customIdGenerator = null;
@@ -190,7 +240,7 @@ function generateId(prefix = 'ann') {
   if (typeof customIdGenerator === 'function') {
     return customIdGenerator(prefix);
   }
-  const randomPart = crypto.randomBytes(4).toString('hex');
+  const randomPart = randomHex(4);
   return `${prefix}-${randomPart}`;
 }
 
@@ -235,13 +285,13 @@ function createMarker({ x, y, number, color = 'red', size = 32, shadow = true, s
       <circle cx="${x}" cy="${y}" r="${size}" fill="url(#${gradientId})" ${filterAttr}/>
       <circle cx="${x}" cy="${y}" r="${size - 2}" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
       <text x="${x}" y="${y + size * 0.35}" text-anchor="middle" fill="white"
-            font-size="${size * 0.9}" font-weight="bold" font-family="Arial, Helvetica, sans-serif">${number}</text>
+            font-size="${size * 0.9}" font-weight="bold" font-family="Arial, Helvetica, sans-serif">${escapeXml(number)}</text>
     `);
   } else if (style === 'outline') {
     elements.push(`
       <circle cx="${x}" cy="${y}" r="${size}" fill="white" stroke="${c}" stroke-width="3" ${filterAttr}/>
       <text x="${x}" y="${y + size * 0.35}" text-anchor="middle" fill="${c}"
-            font-size="${size * 0.9}" font-weight="bold" font-family="Arial, Helvetica, sans-serif">${number}</text>
+            font-size="${size * 0.9}" font-weight="bold" font-family="Arial, Helvetica, sans-serif">${escapeXml(number)}</text>
     `);
   } else if (style === 'badge') {
     const isMultiDigit = number > 9;
@@ -251,7 +301,7 @@ function createMarker({ x, y, number, color = 'red', size = 32, shadow = true, s
       <rect x="${x - width / 2}" y="${y - height / 2}" width="${width}" height="${height}"
             rx="${height / 2}" fill="url(#${gradientId})" ${filterAttr}/>
       <text x="${x}" y="${y + size * 0.35}" text-anchor="middle" fill="white"
-            font-size="${size * 0.9}" font-weight="bold" font-family="Arial, Helvetica, sans-serif">${number}</text>
+            font-size="${size * 0.9}" font-weight="bold" font-family="Arial, Helvetica, sans-serif">${escapeXml(number)}</text>
     `);
   }
 
@@ -344,17 +394,7 @@ function createCallout({ x, y, text, color = 'primary', background = 'white', wi
   const bgColor = getColor(background);
   const id = generateId('callout');
   const defs = [];
-  let fontFamily;
-
-  if (font) {
-    fontFamily = font;
-  } else if (handwriting === true) {
-    fontFamily = HANDWRITING_FONT;
-  } else if (handwriting === false) {
-    fontFamily = CLEAN_FONT;
-  } else {
-    fontFamily = CLEAN_FONT;
-  }
+  const fontFamily = getFontFamily(font, handwriting);
 
   const padding = 14;
   const lineHeight = fontSize * 1.5;
@@ -467,17 +507,7 @@ function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight
   const id = generateId('label');
   const defs = [];
   const elements = [];
-  let fontFamily;
-
-  if (font) {
-    fontFamily = font;
-  } else if (handwriting === true) {
-    fontFamily = HANDWRITING_FONT;
-  } else if (handwriting === false) {
-    fontFamily = CLEAN_FONT;
-  } else {
-    fontFamily = CLEAN_FONT;
-  }
+  const fontFamily = getFontFamily(font, handwriting);
 
   const lines = text.split('\n');
   const lineHeight = fontSize * 1.3;
@@ -504,7 +534,7 @@ function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight
   ).join('');
   elements.push(`
     <text x="${x}" y="${y}" fill="${textColor}" font-size="${fontSize}"
-          font-weight="${fontWeight}" font-family="${fontFamily}">${textElements}</text>
+          font-weight="${escapeXml(fontWeight)}" font-family="${fontFamily}">${textElements}</text>
   `);
 
   return { defs: defs.join('\n'), element: elements.join('\n') };
@@ -518,6 +548,10 @@ function createHighlight({ x, y, width, height, color = 'yellow', opacity = 0.35
   };
 }
 
+// Legacy renderer for the old 'blur' type. No longer wired into buildSvgParts -
+// it blurred the grey rectangle itself, not the image below it, so short boxes
+// came out semi-transparent and the "hidden" content stayed readable. Kept only
+// as an export for compatibility and the snapshot locking that history.
 function createBlur({ x, y, width, height, intensity = 8 }) {
   const id = generateId('blur');
   return {
@@ -528,6 +562,89 @@ function createBlur({ x, y, width, height, intensity = 8 }) {
     `,
     element: `<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="#808080" filter="url(#${id})"/>`
   };
+}
+
+const REDACT_MODES = ['solid', 'pixelate', 'blur'];
+
+// Mid-tone slate: softer than a black censor bar, but far enough from both
+// white page backgrounds and dark app chrome to read as deliberate.
+const DEFAULT_REDACT_FILL = '#64748B';
+
+// 'blur' predates 'redact' and now behaves as {type:'redact', mode:'blur'}.
+// An unrecognised mode falls back to solid so a typo degrades to the safe
+// (irreversible) behaviour instead of a reversible one.
+function getRedactMode(annotation) {
+  if (!annotation || typeof annotation !== 'object') return 'solid';
+  if (annotation.type === 'blur') return 'blur';
+  if (annotation.mode === undefined) return 'solid';
+  if (REDACT_MODES.includes(annotation.mode)) return annotation.mode;
+  log('WARN', `Unknown redact mode ${JSON.stringify(String(annotation.mode))}, falling back to solid.`);
+  return 'solid';
+}
+
+// Label colour follows the fill's luminance, so a light-coloured redaction
+// block does not end up with unreadable white-on-white text. This only affects
+// the label glyphs; the fill itself is opaque either way.
+function getRedactLabelColor(fill) {
+  const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(fill);
+  if (!match) return '#FFFFFF';
+  let hex = match[1];
+  if (hex.length === 3) hex = hex.split('').map((c) => c + c).join('');
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? '#1F2328' : '#FFFFFF';
+}
+
+function createRedact(annotation, { preview = false } = {}) {
+  const mode = getRedactMode(annotation);
+  // Integer coordinates keep the rectangle pixel-aligned: an anti-aliased edge
+  // would blend the fill with the original pixels, leaking a one-pixel border
+  // of the content this rectangle exists to destroy.
+  const x = Math.round(annotation.x || 0);
+  const y = Math.round(annotation.y || 0);
+  const width = Math.max(1, Math.round(annotation.width || 0));
+  const height = Math.max(1, Math.round(annotation.height || 0));
+
+  if (mode === 'solid') {
+    const fill = getColor(annotation.color || DEFAULT_REDACT_FILL);
+    const elements = [
+      `<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${fill}" shape-rendering="crispEdges"/>`
+    ];
+    if (annotation.label) {
+      const fontSize = annotation.fontSize || Math.max(8, Math.min(16, Math.round(height * 0.6)));
+      elements.push(`
+        <text x="${x + width / 2}" y="${y + height / 2 + fontSize * 0.35}" text-anchor="middle" fill="${getRedactLabelColor(fill)}"
+              font-size="${fontSize}" font-weight="600" letter-spacing="${(fontSize * 0.1).toFixed(2)}" font-family="${CLEAN_FONT}">${escapeXml(annotation.label)}</text>
+      `);
+    }
+    // 'top' puts the rectangle above every other annotation, so a redaction
+    // generated over a matched callout covers that callout's text.
+    return { defs: '', element: elements.join('\n'), layer: 'top' };
+  }
+
+  // pixelate/blur are pixel operations on the base image (src/annotate/redact.js);
+  // the SVG layer draws nothing for them. The preview has no pixel pipeline, so
+  // it gets an explicitly approximate placeholder instead of silently showing
+  // nothing while the user positions the region.
+  if (!preview) {
+    return { defs: '', element: '', layer: 'bottom' };
+  }
+
+  const id = generateId('redact');
+  const defs = `
+    <pattern id="${id}-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+      <rect width="8" height="8" fill="rgba(128,128,128,0.35)"/>
+      <line x1="0" y1="0" x2="0" y2="8" stroke="rgba(80,80,80,0.5)" stroke-width="4"/>
+    </pattern>
+  `;
+  const fontSize = Math.max(8, Math.min(14, Math.round(height * 0.5)));
+  const element = [
+    `<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="url(#${id}-hatch)" stroke="rgba(80,80,80,0.8)" stroke-width="1.5" stroke-dasharray="6,4"/>`,
+    `<text x="${x + width / 2}" y="${y + height / 2 + fontSize * 0.35}" text-anchor="middle" fill="rgba(60,60,60,0.9)"
+          font-size="${fontSize}" font-family="${CLEAN_FONT}">${escapeXml(mode)}</text>`
+  ].join('\n');
+  return { defs, element, layer: 'bottom' };
 }
 
 function createConnector({ from, to, color = 'gray', strokeWidth = 2, style = 'dashed' }) {
@@ -760,7 +877,6 @@ function createBracketLabel({ from, to, direction = 'right', text, color = 'red'
   const padding = 8;
   const textW = getTextContentWidthPx(text, fontSize) + padding * 2;
   const textH = fontSize * 1.4 + padding;
-  const isHorizontalLabel = direction === 'left' || direction === 'right';
   const textAnchor = direction === 'left' ? 'end' : (direction === 'right' ? 'start' : 'middle');
 
   elements.push(`
@@ -860,26 +976,63 @@ function adjustColor(hex, amount) {
   return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
 }
 
-function buildSvg(width, height, annotations, options = {}) {
+// Fields that end up verbatim inside an SVG attribute and must therefore be
+// real numbers. Anything else is dropped so the create* default applies.
+const NUMERIC_ANNOTATION_FIELDS = [
+  'x', 'y', 'width', 'height', 'radius', 'size', 'fontSize', 'strokeWidth',
+  'cornerRadius', 'opacity', 'intensity', 'curve', 'padding', 'zoom', 'blockSize'
+];
+
+function sanitizeNumericFields(annotation) {
+  let sanitized = annotation;
+  for (const field of NUMERIC_ANNOTATION_FIELDS) {
+    const value = annotation[field];
+    if (value === undefined || (typeof value === 'number' && isFinite(value))) continue;
+    if (sanitized === annotation) sanitized = { ...annotation };
+    const coerced = Number(value);
+    if (isFinite(coerced)) {
+      sanitized[field] = coerced;
+    } else {
+      log('WARN', `Ignoring non-numeric "${field}" value ${JSON.stringify(String(value))}.`);
+      delete sanitized[field];
+    }
+  }
+  return sanitized;
+}
+
+/**
+ * Render every annotation into raw <defs> and element markup.
+ *
+ * Split out of buildSvg so the config-UI preview can wrap this same output in
+ * its own padded viewBox instead of keeping a second copy of the dispatch.
+ *
+ * @returns {{defs: string[], elements: string[]}}
+ */
+function buildSvgParts(annotations, options = {}) {
   if (typeof options === 'string') {
     options = { theme: options };
   }
 
-  const { InvalidParameterError } = require('../annotate-errors');
   const { theme = null, defaultSizes = {}, customThemes = null } = options;
 
   if (!Array.isArray(annotations)) {
-    throw new InvalidParameterError('Annotations must be an array', 'annotations');
+    throw invalidParameter('Annotations must be an array', 'annotations');
   }
 
   const defs = [];
   const elements = [];
+  // Redaction layering is structural, not order-dependent: solid redact
+  // rectangles always paint above every annotation (so they cover matched
+  // callout text), while pixelate/blur preview placeholders paint below
+  // everything (mimicking the pixel operations that run under the SVG layer).
+  const bottomElements = [];
+  const topElements = [];
   const themeDefaults = customThemes?.[theme] || (theme ? THEMES[theme] : null);
 
   for (const [index, annotation] of annotations.entries()) {
-    let mergedAnn = themeDefaults && themeDefaults[annotation.type]
+    let mergedAnn = sanitizeNumericFields(themeDefaults && themeDefaults[annotation.type]
       ? { ...themeDefaults[annotation.type], ...annotation }
-      : annotation;
+      : annotation);
 
     if (defaultSizes.markerSize && !mergedAnn.size && (mergedAnn.type === 'marker' || mergedAnn.type === 'number')) {
       mergedAnn = { ...mergedAnn, size: defaultSizes.markerSize };
@@ -923,7 +1076,8 @@ function buildSvg(width, height, annotations, options = {}) {
         result = createHighlight(mergedAnn);
         break;
       case 'blur':
-        result = createBlur(mergedAnn);
+      case 'redact':
+        result = createRedact(mergedAnn, { preview: options.preview === true });
         break;
       case 'connector':
       case 'line':
@@ -959,21 +1113,32 @@ function buildSvg(width, height, annotations, options = {}) {
         const element = options.outputFormat === 'svg'
           ? `<g data-annotation-index="${index}">${result.element}</g>`
           : result.element;
-        elements.push(element);
+        const bucket = result.layer === 'top' ? topElements
+          : result.layer === 'bottom' ? bottomElements
+            : elements;
+        bucket.push(element);
       }
     }
   }
 
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    ${defs.join('\n')}
-  </defs>
-  ${elements.join('\n')}
-</svg>`;
+  return { defs, elements: [...bottomElements, ...elements, ...topElements] };
 }
 
-module.exports = {
+function buildSvg(width, height, annotations, options = {}) {
+  const { defs, elements } = buildSvgParts(annotations, options);
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">`,
+    '  <defs>',
+    '    ' + defs.join(String.fromCharCode(10)),
+    '  </defs>',
+    '  ' + elements.join(String.fromCharCode(10)),
+    '</svg>'
+  ].join(String.fromCharCode(10));
+}
+
+const api = {
   log,
   COLORS,
   THEMES,
@@ -985,9 +1150,10 @@ module.exports = {
   LINE_HEIGHT_RATIO,
   getSizePreset,
   getTextContentWidthPx,
-  getLabelTextWidthRatio,
   escapeXml,
   getColor,
+  getFontFamily,
+  sanitizeNumericFields,
   setIdGenerator,
   resetIdGenerator,
   createDropShadow,
@@ -1000,6 +1166,10 @@ module.exports = {
   createLabel,
   createHighlight,
   createBlur,
+  DEFAULT_REDACT_FILL,
+  createRedact,
+  getRedactLabelColor,
+  getRedactMode,
   createConnector,
   createIcon,
   createMeasure,
@@ -1008,5 +1178,15 @@ module.exports = {
   createSpotlight,
   createMagnifier,
   adjustColor,
+  buildSvgParts,
   buildSvg
 };
+
+if (isCommonJs) {
+  module.exports = api;
+}
+// Entry point for the config UI and examples pages, which load this file with a
+// plain <script> tag rather than through a bundler.
+if (typeof globalThis !== 'undefined') {
+  globalThis.ImageAnnotatorRender = api;
+}

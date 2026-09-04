@@ -1,6 +1,6 @@
 {
   "name": "image-annotator-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Hybrid MCP server + CLI + Skills for annotating screenshots with markers, arrows, callouts, and more. Works with Claude Desktop, coding agents, and Playwright MCP.",
   "main": "server.js",
   "bin": {
@@ -13,7 +13,8 @@
     "cli": "node annotate.js",
     "config-ui": "node config-ui/launch.js",
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "validate": "node scripts/validate-hybrid-release.js"
   },
   "keywords": [
     "mcp",
@@ -42,6 +43,22 @@
     "url": "https://github.com/vapvarun/image-annotator-mcp/issues"
   },
   "homepage": "https://github.com/vapvarun/image-annotator-mcp#readme",
+  "files": [
+    "src/",
+    "skills/",
+    "config-ui/launch.js",
+    "config-ui/server.js",
+    "config-ui/public/",
+    "examples/preview/",
+    "server.js",
+    "annotate.js",
+    "config-loader.js",
+    "annotate-errors.js",
+    "docs/hybrid-architecture.md",
+    "AGENTS.md",
+    "README.zh-CN.md",
+    "CHANGELOG.md"
+  ],
   "engines": {
     "node": ">=18.0.0"
   },

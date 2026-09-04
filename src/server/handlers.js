@@ -1,6 +1,14 @@
 const path = require('path');
 const fs = require('fs');
-const { annotateImage, getImageDimensions } = require('../annotate');
+const {
+  annotateImage,
+  getImageDimensions,
+  estimateDimensionsFromAnnotations,
+  remapAnnotation
+} = require('../annotate');
+// Pure layout helper, imported directly so test doubles for the annotate
+// barrel do not have to stub it.
+const { buildStepGuideAnnotations } = require('../annotate/step-guide');
 const { FileNotFoundError, InvalidParameterError } = require('../annotate-errors');
 
 function getOutputPath(inputPath, suffix = '-annotated', outputFormat = null) {
@@ -38,6 +46,9 @@ async function handleAnnotate(args) {
         const [i, j] = warning.annotations;
         const { x, y, w, h } = warning.overlap;
         return `  Warning: Overlap detected between annotations #${i + 1} and #${j + 1} at ${x},${y} (${w}x${h})`;
+      }
+      if (warning.type === 'redaction') {
+        return `  Warning: ${warning.message}`;
       }
       return `  Warning: ${warning.property} clamped from ${warning.original} to ${warning.clamped} (annotation #${warning.annotation + 1})`;
     }).join('\n')
@@ -78,53 +89,9 @@ async function handleStepGuide(args) {
     throw new FileNotFoundError(input_path);
   }
 
-  const dpr = device_pixel_ratio || 1;
-  const colors = ['primary', 'green', 'orange', 'purple', 'cyan'];
-  const annotations = [];
-
-  steps.forEach((step, index) => {
-    const color = step.color || colors[index % colors.length];
-
-    annotations.push({
-      type: 'marker',
-      x: step.x,
-      y: step.y,
-      number: index + 1,
-      color,
-      size: 24
-    });
-
-    const labelX = step.x + Math.round(50 * dpr);
-    const labelY = step.y;
-
-    annotations.push({
-      type: 'arrow',
-      from: [step.x + Math.round(28 * dpr), step.y],
-      to: [labelX - Math.round(5 * dpr), labelY],
-      color,
-      strokeWidth: 2
-    });
-
-    annotations.push({
-      type: 'label',
-      x: labelX,
-      y: labelY + Math.round(6 * dpr),
-      text: step.label,
-      color: 'darkGray',
-      fontSize: 16,
-      background: 'white',
-      shadow: true
-    });
-
-    if (connect_steps && index < steps.length - 1) {
-      const next = steps[index + 1];
-      annotations.push({
-        type: 'connector',
-        from: [step.x, step.y + Math.round(30 * dpr)],
-        to: [next.x, next.y - Math.round(30 * dpr)],
-        color: 'gray'
-      });
-    }
+  const annotations = buildStepGuideAnnotations(steps, {
+    devicePixelRatio: device_pixel_ratio,
+    connectSteps: connect_steps
   });
 
   const finalPath = output_path || getOutputPath(input_path, '-guide', output_format || null);
@@ -142,60 +109,6 @@ async function handleStepGuide(args) {
       text: `✓ Step guide created: ${result.outputPath}\n  Steps: ${steps.length}`
     }]
   };
-}
-
-function estimateDimensionsFromAnnotations(annotations) {
-  let maxX = 0;
-  let maxY = 0;
-  let found = false;
-
-  for (const annotation of annotations) {
-    const consider = (x, y) => {
-      if (typeof x === 'number' && isFinite(x) && x > maxX) { maxX = x; found = true; }
-      if (typeof y === 'number' && isFinite(y) && y > maxY) { maxY = y; found = true; }
-    };
-
-    consider(annotation.x, annotation.y);
-
-    if (Array.isArray(annotation.from) && annotation.from.length >= 2) consider(annotation.from[0], annotation.from[1]);
-    if (Array.isArray(annotation.to) && annotation.to.length >= 2) consider(annotation.to[0], annotation.to[1]);
-
-    if (typeof annotation.width === 'number' && isFinite(annotation.width)) {
-      const right = (annotation.x || 0) + annotation.width;
-      if (right > maxX) { maxX = right; found = true; }
-    }
-    if (typeof annotation.height === 'number' && isFinite(annotation.height)) {
-      const bottom = (annotation.y || 0) + annotation.height;
-      if (bottom > maxY) { maxY = bottom; found = true; }
-    }
-    if (typeof annotation.radius === 'number' && isFinite(annotation.radius)) {
-      const rx = (annotation.x || 0) + annotation.radius;
-      const ry = (annotation.y || 0) + annotation.radius;
-      if (rx > maxX) { maxX = rx; found = true; }
-      if (ry > maxY) { maxY = ry; found = true; }
-    }
-  }
-
-  if (!found || maxX === 0 || maxY === 0) return null;
-  return { width: maxX, height: maxY };
-}
-
-function remapAnnotation(annotation, sx, sy) {
-  const scaled = Object.assign({}, annotation);
-  const scaleNum = (value, scale) => (typeof value === 'number' && isFinite(value)) ? Math.round(value * scale) : value;
-  const scalePoint = (point, scaleX, scaleY) => Array.isArray(point) && point.length >= 2
-    ? [Math.round(point[0] * scaleX), Math.round(point[1] * scaleY)]
-    : point;
-
-  if (typeof scaled.x === 'number') scaled.x = scaleNum(scaled.x, sx);
-  if (typeof scaled.y === 'number') scaled.y = scaleNum(scaled.y, sy);
-  if (typeof scaled.width === 'number') scaled.width = scaleNum(scaled.width, sx);
-  if (typeof scaled.height === 'number') scaled.height = scaleNum(scaled.height, sy);
-  if (typeof scaled.radius === 'number') scaled.radius = scaleNum(scaled.radius, Math.min(sx, sy));
-  if (scaled.from) scaled.from = scalePoint(scaled.from, sx, sy);
-  if (scaled.to) scaled.to = scalePoint(scaled.to, sx, sy);
-
-  return scaled;
 }
 
 async function handleReannotate(args) {

@@ -42,7 +42,7 @@ image-annotator-mcp/
 
 ### `src/annotate/`
 - Core annotation engine using Sharp plus CLI/runtime helpers
-- Supports 11 annotation types: marker, arrow, curved-arrow, callout, rect, circle, label, highlight, blur, connector, icon
+- Supports 12 annotation types: marker, arrow, curved-arrow, callout, rect, circle, label, highlight, redact, blur (deprecated alias), connector, icon
 - Built-in themes: documentation, tutorial, bugReport, highlight
 
 ## MCP Tools
@@ -96,7 +96,8 @@ Add to `claude_desktop_config.json`:
 - `circle` - Circle highlights
 - `label` - Text labels with optional backgrounds
 - `highlight` - Semi-transparent overlays
-- `blur` - Blur sensitive content
+- `redact` - Cover a region; default mode `solid` is irreversible and paints above all other annotations. Modes `pixelate`/`blur` are reversible de-emphasis only
+- `blur` - Deprecated alias for `redact` with mode `blur` (not privacy protection)
 - `connector` - Dashed lines between elements
 - `icon` - Icon badges (check, x, warning, info, question)
 

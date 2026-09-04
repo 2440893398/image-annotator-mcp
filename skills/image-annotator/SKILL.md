@@ -10,11 +10,11 @@ version: 1.0.0
 Use this skill when you need to add professional visual markers, arrows, callouts, or highlights to a screenshot or image. It's particularly useful for:
 - Creating step-by-step documentation
 - Highlighting specific UI elements in bug reports
-- Blurring sensitive information in screenshots
+- Redacting sensitive information in screenshots (use `redact` with the default `solid` mode)
 - Adding explanatory callouts to complex diagrams
 
 ## Supported workflows
-1. **Annotate a screenshot**: Add markers, arrows, callouts, rectangles, circles, labels, highlights, blur, connectors, and icons.
+1. **Annotate a screenshot**: Add markers, arrows, callouts, rectangles, circles, labels, highlights, redactions, connectors, and icons.
 2. **Get image dimensions**: Retrieve width, height, and format to calculate precise annotation coordinates.
 3. **Create step-by-step guides**: Automatically generate numbered markers with labels and connecting arrows.
 4. **Reannotate resized screenshots**: Proportionally remap existing annotations to a new image size.
@@ -41,7 +41,8 @@ Use MCP tools when working in environments that support the Model Context Protoc
 Prefer MCP tools when you need to interact with the server's state or when CLI access is restricted.
 
 ## Guardrails
-- **No OCR**: The tool does not perform Optical Character Recognition. Redaction patterns only apply to text in labels/callouts you add.
+- **Redaction**: Only `redact` with mode `solid` (the default) is irreversible. `pixelate`/`blur` are reversible visual de-emphasis and warn on every use — never use them for sensitive content. `svg` output cannot redact. See [guardrails.md](./references/guardrails.md).
+- **No OCR**: The tool does not perform Optical Character Recognition. Redaction patterns only apply to text in labels/callouts you add, and cover the annotation's own text box — not content inside the screenshot.
 - **Coordinate Validation**: Always check image dimensions before placing annotations to ensure they are within bounds.
 - **File Paths**: Use absolute paths when possible to avoid ambiguity.
 - **Sensitive Data**: Do not include secrets or private keys in annotation text.

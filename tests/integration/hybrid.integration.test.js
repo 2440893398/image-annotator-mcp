@@ -184,6 +184,15 @@ describe('Hybrid Integration - Cross-mode Regression', () => {
   });
 
   describe('Config UI launch wiring', () => {
+    // Unmocking inline after the assertions means one failure leaks its mocks
+    // into every later test in this block, so tear down unconditionally.
+    afterEach(() => {
+      jest.restoreAllMocks();
+      jest.dontMock('../../src/config-ui/launch');
+      jest.dontMock('child_process');
+      jest.resetModules();
+    });
+
     it('MCP open_config_ui handler forwards working_directory to launchConfigUI', async () => {
       jest.resetModules();
       const launchMock = jest.fn().mockResolvedValue({
@@ -204,13 +213,47 @@ describe('Hybrid Integration - Cross-mode Regression', () => {
       fs.mkdirSync(workingDir, { recursive: true });
       const result = await serverWithMocks.handleOpenConfigUi({ working_directory: workingDir });
 
-      expect(launchMock).toHaveBeenCalledWith(workingDir);
+      expect(launchMock).toHaveBeenCalledWith(workingDir, undefined);
       expect(result.content[0].text).toContain('http://localhost:4567');
       expect(result.content[0].text).toContain('.image-annotator.json');
 
-      spawnSpy.mockRestore();
-      jest.dontMock('../../src/config-ui/launch');
+      expect(spawnSpy).toHaveBeenCalled();
+    });
+
+    it('MCP open_config_ui handler forwards a requested port', async () => {
       jest.resetModules();
+      const launchMock = jest.fn().mockResolvedValue({
+        url: 'http://localhost:5555',
+        process: { on: jest.fn() }
+      });
+      jest.doMock('../../src/config-ui/launch', () => launchMock);
+      jest.spyOn(require('child_process'), 'spawn').mockImplementation(() => ({ unref: jest.fn(), on: jest.fn() }));
+
+      const serverWithMocks = require('../../server');
+      const result = await serverWithMocks.handleOpenConfigUi({ port: 5555 });
+
+      expect(launchMock).toHaveBeenCalledWith(undefined, 5555);
+      expect(result.content[0].text).toContain('http://localhost:5555');
+    });
+
+    it('passes a requested port to the spawned server via PORT', async () => {
+      jest.resetModules();
+      const spawnMock = jest.fn(() => ({
+        stdout: { on: (event, handler) => { if (event === 'data') process.nextTick(() => handler(Buffer.from('http://localhost:5678' + String.fromCharCode(10)))); } },
+        stderr: { on: () => {} },
+        on: () => {}
+      }));
+      jest.doMock('child_process', () => ({ spawn: spawnMock }));
+      const launchConfigUI = require('../../src/config-ui/launch');
+
+      const launchResult = await launchConfigUI(undefined, 5678);
+
+      expect(launchResult.url).toBe('http://localhost:5678');
+      expect(spawnMock).toHaveBeenCalledWith(
+        'node',
+        [path.join(__dirname, '..', '..', 'src', 'config-ui', 'server.js')],
+        expect.objectContaining({ env: expect.objectContaining({ PORT: '5678' }) })
+      );
     });
 
     it('config-ui launcher CLI wiring passes --working-directory into spawned cwd', async () => {
@@ -244,8 +287,6 @@ describe('Hybrid Integration - Cross-mode Regression', () => {
         expect.objectContaining({ cwd: workingDir, stdio: 'pipe' })
       );
 
-      jest.dontMock('child_process');
-      jest.resetModules();
     });
   });
 

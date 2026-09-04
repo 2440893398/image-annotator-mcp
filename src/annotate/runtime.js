@@ -1,4 +1,4 @@
-const sharp = require('sharp');
+﻿const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs');
 const { loadConfig } = require('../config-loader');
@@ -22,14 +22,22 @@ const {
   getTextContentWidthPx,
   escapeXml,
   buildSvg,
+  getRedactMode,
   log,
   setIdGenerator,
   resetIdGenerator
 } = require('./render');
+const {
+  isRedactAnnotation,
+  buildSolidRedactionLayers,
+  buildSoftRedactionLayers
+} = require('./redact');
 
-let optimize = null;
-({ optimize } = require('svgo'));
+const { optimize } = require('svgo');
 
+// Runs on post-DPR/post-clamp annotations so the generated box matches exactly
+// what will be rendered (DPR does not scale fontSize, so a box computed from
+// raw coordinates and then scaled would not fit the drawn text box).
 function applyRedactPatterns(annotations, redactPatterns, sizePreset = 'm') {
   if (!redactPatterns || redactPatterns.length === 0) {
     return annotations;
@@ -43,34 +51,43 @@ function applyRedactPatterns(annotations, redactPatterns, sizePreset = 'm') {
     }
   });
 
-  const blurAnnotations = [];
-  const redactedIndices = new Set();
+  const redactAnnotations = [];
 
-  for (let i = 0; i < annotations.length; i++) {
-    const annotation = annotations[i];
+  for (const [index, annotation] of annotations.entries()) {
     if (typeof annotation.text !== 'string') continue;
+    if (!regexes.some((regex) => regex.test(annotation.text))) continue;
 
-    const matches = regexes.some((regex) => regex.test(annotation.text));
-    if (!matches || redactedIndices.has(i)) continue;
-
-    redactedIndices.add(i);
     const box = getBoundingBox(annotation, sizePreset);
     if (!box) continue;
 
-    blurAnnotations.push({
-      type: 'blur',
-      x: box.x,
-      y: box.y,
-      width: box.w,
-      height: box.h
+    // The bounding box estimates text at 0.5em per non-CJK character, but real
+    // glyphs are often wider (digits ~0.55em, 'W' ~0.95em), so rendered text
+    // can spill past the box - and a redaction that leaves glyph edges exposed
+    // leaks content. Inflate by a proportional safety margin. Known limit:
+    // pathological all-wide-glyph strings can exceed even this; guardrails.md
+    // tells callers to visually verify redacted output.
+    const inflateX = Math.round(box.w * 0.35) + 12;
+    const inflateY = 12;
+
+    redactAnnotations.push({
+      type: 'redact',
+      mode: 'solid',
+      x: box.x - inflateX,
+      y: box.y - inflateY,
+      width: box.w + inflateX * 2,
+      height: box.h + inflateY * 2,
+      label: 'REDACTED',
+      // Internal marker (never serialised into the SVG): lets detectCollisions
+      // skip the intentional overlap with the annotation this box covers.
+      _generatedFor: index
     });
   }
 
-  if (blurAnnotations.length === 0) {
+  if (redactAnnotations.length === 0) {
     return annotations;
   }
 
-  return [...annotations, ...blurAnnotations];
+  return [...annotations, ...redactAnnotations];
 }
 
 async function annotateImage(inputPath, outputPath, annotations, options = {}) {
@@ -85,7 +102,7 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
   checkImageSize(metadata);
 
   const inputDir = path.dirname(inputPath);
-  const config = options.config || loadConfig(inputDir) || loadConfig();
+  const config = options.config || loadConfig(inputDir);
 
   let sizePreset = config.sizePreset;
   if (sizePreset === 'auto' || !sizePreset) {
@@ -93,14 +110,10 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
   }
 
   const redactPatterns = options.redactPatterns;
-  const redactedAnnotations = redactPatterns && redactPatterns.length > 0
-    ? applyRedactPatterns(annotations, redactPatterns, sizePreset)
-    : annotations;
-
   const devicePixelRatio = options.devicePixelRatio || 1;
   const scaledAnnotations = devicePixelRatio !== 1
-    ? redactedAnnotations.map((annotation) => scaleAnnotationCoords(annotation, devicePixelRatio))
-    : redactedAnnotations;
+    ? annotations.map((annotation) => scaleAnnotationCoords(annotation, devicePixelRatio))
+    : annotations;
   const padding = normalizeCanvasPadding(options.canvasPadding);
   const extendedWidth = width + padding.left + padding.right;
   const extendedHeight = height + padding.top + padding.bottom;
@@ -108,7 +121,50 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
     ? scaledAnnotations.map((annotation) => offsetAnnotationCoords(annotation, padding.left, padding.top))
     : scaledAnnotations;
 
-  const { annotations: validAnnotations, warnings: clampWarnings } = clampAnnotations(offsetAnnotations, extendedWidth, extendedHeight);
+  const { annotations: clampedAnnotations, warnings: clampWarnings } = clampAnnotations(offsetAnnotations, extendedWidth, extendedHeight);
+
+  // redact_patterns runs after DPR scaling and clamping so each generated box
+  // is computed from the coordinates the matched annotation will actually be
+  // drawn at (DPR does not scale fontSize, and clamping can move annotations).
+  // The generated boxes then get their own clamping pass against the canvas.
+  let validAnnotations = clampedAnnotations;
+  let generatedRedactionCount = 0;
+  if (redactPatterns && redactPatterns.length > 0) {
+    const withRedactions = applyRedactPatterns(clampedAnnotations, redactPatterns, sizePreset);
+    if (withRedactions.length > clampedAnnotations.length) {
+      const generated = withRedactions.slice(clampedAnnotations.length);
+      const { annotations: clampedGenerated, warnings: generatedWarnings } = clampAnnotations(generated, extendedWidth, extendedHeight);
+      for (const warning of generatedWarnings) {
+        warning.annotation += clampedAnnotations.length;
+      }
+      clampWarnings.push(...generatedWarnings);
+      validAnnotations = [...clampedAnnotations, ...clampedGenerated];
+      generatedRedactionCount = clampedGenerated.length;
+    }
+  }
+
+  // Redaction is a security feature: a region that silently ends up covering
+  // nothing must be an error, never a warning. clampAnnotations may have
+  // dropped an invalid width/height or clamped it to zero at the canvas edge.
+  const redactAnnotations = [];
+  const redactionWarnings = [];
+  for (const [index, annotation] of validAnnotations.entries()) {
+    if (!isRedactAnnotation(annotation)) continue;
+    if (!(annotation.width >= 1) || !(annotation.height >= 1)) {
+      throw new InvalidParameterError(
+        `redact region (annotation #${index + 1}) has no coverable area inside the canvas after clamping; width and height must be at least 1px`,
+        'annotations'
+      );
+    }
+    redactAnnotations.push(annotation);
+    const mode = getRedactMode(annotation);
+    if (mode !== 'solid') {
+      redactionWarnings.push({
+        type: 'redaction',
+        message: `annotation #${index + 1} uses reversible "${mode}" de-emphasis - it does not protect sensitive content. Use mode "solid" (the default for type "redact") to actually redact.`
+      });
+    }
+  }
   const baseSizes = SIZE_PRESETS[sizePreset] || SIZE_PRESETS.m;
   const sizes = config.defaultSizes && typeof config.defaultSizes === 'object'
     ? { ...baseSizes, ...config.defaultSizes }
@@ -125,8 +181,24 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
     outputFormat
   };
 
+  if (outputFormat === 'svg' && generatedRedactionCount > 0) {
+    // The whole point of redact_patterns is keeping matched text out of the
+    // output, but an svg layer contains that text verbatim as <text> - no
+    // rectangle can conceal the file's own contents. Fail instead of warning.
+    throw new InvalidParameterError(
+      'redact_patterns matched annotation text, but svg output is an annotation-only layer that contains the matched text verbatim. Use png, jpeg, or webp output instead.',
+      'redact_patterns'
+    );
+  }
+  if (outputFormat === 'svg' && redactAnnotations.length > 0) {
+    redactionWarnings.push({
+      type: 'redaction',
+      message: 'svg output contains no image pixels: redact/blur regions do not conceal the underlying screenshot, and the SVG can be edited to remove them. Use png, jpeg, or webp for actual redaction.'
+    });
+  }
+
   const collisionWarnings = detectCollisions(validAnnotations, sizePreset);
-  const warnings = [...clampWarnings, ...collisionWarnings];
+  const warnings = [...clampWarnings, ...collisionWarnings, ...redactionWarnings];
   const svg = buildSvg(extendedWidth, extendedHeight, validAnnotations, enhancedOptions);
   const optimizedSvg = optimizeSvg(svg);
   const altText = generateAltText(validAnnotations, extendedWidth, extendedHeight, enhancedOptions);
@@ -161,61 +233,75 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
   }
 
   try {
-    let pipeline = sharp(inputPath);
+    // Solid redaction reaches the final image via the top SVG layer; the base
+    // image only needs pixel work for pixelate/blur de-emphasis, plus a fully
+    // redacted intermediate when a magnifier could otherwise sample original
+    // pixels out of a redacted region.
+    const solidRedactions = redactAnnotations.filter((a) => getRedactMode(a) === 'solid');
+    const softRedactions = redactAnnotations.filter((a) => getRedactMode(a) !== 'solid');
+    const softLayers = softRedactions.length > 0
+      ? await buildSoftRedactionLayers(softRedactions, inputPath, { padding, sourceWidth: width, sourceHeight: height })
+      : [];
 
-    if (padding.top || padding.right || padding.bottom || padding.left) {
-      pipeline = pipeline.extend({
-        top: padding.top,
-        right: padding.right,
-        bottom: padding.bottom,
-        left: padding.left,
-        background: { r: 255, g: 255, b: 255, alpha: 0 }
-      });
-    }
+    const hasPadding = !!(padding.top || padding.right || padding.bottom || padding.left);
+    const extendOptions = {
+      top: padding.top,
+      right: padding.right,
+      bottom: padding.bottom,
+      left: padding.left,
+      background: { r: 255, g: 255, b: 255, alpha: 0 }
+    };
 
-    pipeline = pipeline.composite([{
-      input: Buffer.from(optimizedSvg),
-      top: 0,
-      left: 0
-    }]);
+    let pipeline;
+    let magnifierLayers;
+    let baseLayers = [];
 
-    // Composite magnifier zoomed regions
-    for (const mag of magnifierAnnotations) {
-      try {
-        const [tx, ty] = mag.target;
-        const [ax, ay] = mag.anchor;
-        const r = mag.radius || 60;
-        const zoom = mag.zoom || 2;
-        const sourceR = Math.round(r / zoom);
-        const extractLeft = Math.max(0, Math.round(tx - sourceR));
-        const extractTop = Math.max(0, Math.round(ty - sourceR));
-        const extractW = Math.min(width - extractLeft, sourceR * 2);
-        const extractH = Math.min(height - extractTop, sourceR * 2);
-        if (extractW > 0 && extractH > 0) {
-          const diameter = r * 2;
-          // Extract source region and resize to fill magnifier circle
-          const zoomed = await sharp(inputPath)
-            .extract({ left: extractLeft, top: extractTop, width: extractW, height: extractH })
-            .resize(diameter, diameter, { fit: 'cover' })
-            .toBuffer();
-          // Create circular mask
-          const circleMask = Buffer.from(
-            `<svg width="${diameter}" height="${diameter}"><circle cx="${r}" cy="${r}" r="${r}" fill="white"/></svg>`
-          );
-          const maskedZoomed = await sharp(zoomed)
-            .composite([{ input: circleMask, blend: 'dest-in' }])
-            .png()
-            .toBuffer();
-          pipeline = pipeline.composite([{
-            input: maskedZoomed,
-            top: Math.round(ay - r + (padding.top || 0)),
-            left: Math.round(ax - r + (padding.left || 0))
-          }]);
-        }
-      } catch (magErr) {
-        log('WARN', `Magnifier compositing failed: ${magErr.message}`);
+    if (redactAnnotations.length > 0 && magnifierAnnotations.length > 0) {
+      // Bake every redaction into the sampling source - including solid fills,
+      // because the SVG rectangle only covers its own region while a magnifier
+      // anchored elsewhere would zoom the original pixels underneath it. The
+      // final composite draws the solid rectangles again on top; same colour,
+      // so the double application is idempotent.
+      let intermediate = sharp(inputPath);
+      if (hasPadding) intermediate = intermediate.extend(extendOptions);
+      const solidLayers = buildSolidRedactionLayers(solidRedactions, extendedWidth, extendedHeight);
+      if (softLayers.length > 0 || solidLayers.length > 0) {
+        intermediate = intermediate.composite([...softLayers, ...solidLayers]);
       }
+      const redactedBase = await intermediate.png().toBuffer();
+
+      // The intermediate is the padded canvas, so extraction runs in
+      // padded-canvas coordinates: zero offsets, extended bounds.
+      magnifierLayers = await buildMagnifierLayers(magnifierAnnotations, redactedBase, {
+        offsetLeft: 0,
+        offsetTop: 0,
+        boundsWidth: extendedWidth,
+        boundsHeight: extendedHeight
+      });
+      pipeline = sharp(redactedBase);
+    } else {
+      // Sampling from the unpadded source: the offsets convert padded-canvas
+      // coordinates back into source space.
+      magnifierLayers = await buildMagnifierLayers(magnifierAnnotations, inputPath, {
+        offsetLeft: padding.left,
+        offsetTop: padding.top,
+        boundsWidth: width,
+        boundsHeight: height
+      });
+      pipeline = sharp(inputPath);
+      if (hasPadding) pipeline = pipeline.extend(extendOptions);
+      baseLayers = softLayers;
     }
+
+    // sharp's composite() replaces the layer list rather than appending to it,
+    // so every layer has to be collected up front and passed in a single call.
+    // De-emphasis patches go under the magnifier patches, which go under the
+    // SVG (it draws their border ring and connector line on top of them).
+    pipeline = pipeline.composite([
+      ...baseLayers,
+      ...magnifierLayers,
+      { input: Buffer.from(optimizedSvg), top: 0, left: 0 }
+    ]);
 
     if (outputFormat === 'webp') {
       pipeline = pipeline.webp({ quality });
@@ -247,6 +333,94 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
   };
 }
 
+/**
+ * Extract-and-zoom patches for magnifier annotations.
+ *
+ * `source` is either the unpadded input image (offsets = canvas padding,
+ * bounds = source dimensions) or the padded, fully-redacted intermediate
+ * (offsets = 0, bounds = extended dimensions). Each call site passes exactly
+ * one coordinate convention - nothing in here mixes the two.
+ */
+async function buildMagnifierLayers(magnifierAnnotations, source, { offsetLeft, offsetTop, boundsWidth, boundsHeight }) {
+  const magnifierLayers = [];
+
+  for (const mag of magnifierAnnotations) {
+    try {
+      // target/anchor arrive in padded-canvas space (offsetAnnotationCoords has
+      // already shifted them). The composite targets that same space, but the
+      // extract reads from `source`, so only it needs converting.
+      const [tx, ty] = mag.target;
+      const [ax, ay] = mag.anchor;
+      const sourceX = tx - offsetLeft;
+      const sourceY = ty - offsetTop;
+      const r = Math.max(1, Math.round(mag.radius || 60));
+      const zoom = mag.zoom || 2;
+
+      // The window we want to magnify, centred on the target. Rounding the
+      // whole window rather than its radius keeps the effective zoom within
+      // half a source pixel of the requested one.
+      const windowSize = Math.max(1, Math.round((r * 2) / zoom));
+      const windowLeft = Math.round(sourceX - windowSize / 2);
+      const windowTop = Math.round(sourceY - windowSize / 2);
+
+      // Near an edge only part of that window exists. Extract the overlap and
+      // place it at its true offset inside the circle, instead of sliding the
+      // window inwards (which silently magnified the wrong spot) or stretching
+      // a clipped region to fill the circle (which broke the zoom factor).
+      const clipLeft = Math.max(0, windowLeft);
+      const clipTop = Math.max(0, windowTop);
+      const clipWidth = Math.min(boundsWidth, windowLeft + windowSize) - clipLeft;
+      const clipHeight = Math.min(boundsHeight, windowTop + windowSize) - clipTop;
+
+      if (clipWidth > 0 && clipHeight > 0) {
+        const diameter = r * 2;
+        const scale = diameter / windowSize;
+        const patchLeft = Math.min(diameter - 1, Math.max(0, Math.round((clipLeft - windowLeft) * scale)));
+        const patchTop = Math.min(diameter - 1, Math.max(0, Math.round((clipTop - windowTop) * scale)));
+        const patchWidth = Math.max(1, Math.min(diameter - patchLeft, Math.round(clipWidth * scale)));
+        const patchHeight = Math.max(1, Math.min(diameter - patchTop, Math.round(clipHeight * scale)));
+
+        const patch = await sharp(source)
+          .extract({ left: clipLeft, top: clipTop, width: clipWidth, height: clipHeight })
+          .resize(patchWidth, patchHeight, { fit: 'fill' })
+          .toBuffer();
+
+        const circleMask = Buffer.from(
+          `<svg width="${diameter}" height="${diameter}"><circle cx="${r}" cy="${r}" r="${r}" fill="white"/></svg>`
+        );
+        // Anything the window covered that lies outside the image stays
+        // transparent, so the screenshot underneath shows through.
+        const maskedZoomed = await sharp({
+          create: {
+            width: diameter,
+            height: diameter,
+            channels: 4,
+            background: { r: 0, g: 0, b: 0, alpha: 0 }
+          }
+        })
+          .composite([
+            { input: patch, top: patchTop, left: patchLeft },
+            { input: circleMask, blend: 'dest-in' }
+          ])
+          .png()
+          .toBuffer();
+
+        magnifierLayers.push({
+          input: maskedZoomed,
+          top: Math.round(ay - r),
+          left: Math.round(ax - r)
+        });
+      } else {
+        log('WARN', `Magnifier target (${tx},${ty}) lies outside the source image; skipping its zoomed region.`);
+      }
+    } catch (magErr) {
+      log('WARN', `Magnifier compositing failed: ${magErr.message}`);
+    }
+  }
+
+  return magnifierLayers;
+}
+
 async function getImageDimensions(imagePath) {
   const metadata = await sharp(imagePath).metadata();
   return {
@@ -269,11 +443,6 @@ function checkImageSize(metadata) {
 
 function optimizeSvg(svg) {
   if (typeof svg !== 'string' || svg.length === 0) {
-    return svg;
-  }
-
-  if (!optimize) {
-    log('WARN', 'SVGO is not available, using original SVG output.');
     return svg;
   }
 
@@ -343,26 +512,103 @@ function scaleAnnotationCoords(annotation, dpr) {
   return scaled;
 }
 
+// Every coordinate-carrying field an annotation can have. scaleAnnotationCoords
+// and offsetAnnotationCoords cover the same set; keeping remapAnnotation in step
+// is what stops leadout/magnifier from being silently left behind.
+const POINT_FIELDS = ['from', 'to', 'target', 'anchor'];
+
+/**
+ * Proportionally rescale one annotation's coordinates. Used by reannotate to
+ * move annotations from a previous screenshot onto a resized one.
+ */
+function remapAnnotation(annotation, scaleX, scaleY) {
+  const scaled = { ...annotation };
+  const scaleNum = (value, scale) => (typeof value === 'number' && isFinite(value)) ? Math.round(value * scale) : value;
+  const scalePoint = (point) => Array.isArray(point) && point.length >= 2
+    ? [scaleNum(point[0], scaleX), scaleNum(point[1], scaleY), ...point.slice(2)]
+    : point;
+
+  if (typeof scaled.x === 'number') scaled.x = scaleNum(scaled.x, scaleX);
+  if (typeof scaled.y === 'number') scaled.y = scaleNum(scaled.y, scaleY);
+  if (typeof scaled.width === 'number') scaled.width = scaleNum(scaled.width, scaleX);
+  if (typeof scaled.height === 'number') scaled.height = scaleNum(scaled.height, scaleY);
+  if (typeof scaled.radius === 'number') scaled.radius = scaleNum(scaled.radius, Math.min(scaleX, scaleY));
+  for (const field of POINT_FIELDS) {
+    if (scaled[field]) scaled[field] = scalePoint(scaled[field]);
+  }
+
+  return scaled;
+}
+
+/**
+ * Best-effort guess at the previous screenshot's size from the extents of its
+ * annotations, for when the caller cannot supply the real dimensions.
+ */
+function estimateDimensionsFromAnnotations(annotations) {
+  if (!Array.isArray(annotations)) return null;
+
+  let maxX = 0;
+  let maxY = 0;
+  let found = false;
+
+  const consider = (x, y) => {
+    if (typeof x === 'number' && isFinite(x) && x > maxX) { maxX = x; found = true; }
+    if (typeof y === 'number' && isFinite(y) && y > maxY) { maxY = y; found = true; }
+  };
+
+  for (const annotation of annotations) {
+    consider(annotation.x, annotation.y);
+
+    for (const field of POINT_FIELDS) {
+      const point = annotation[field];
+      if (Array.isArray(point) && point.length >= 2) consider(point[0], point[1]);
+    }
+
+    if (typeof annotation.width === 'number' && isFinite(annotation.width)) {
+      consider((annotation.x || 0) + annotation.width, undefined);
+    }
+    if (typeof annotation.height === 'number' && isFinite(annotation.height)) {
+      consider(undefined, (annotation.y || 0) + annotation.height);
+    }
+    if (typeof annotation.radius === 'number' && isFinite(annotation.radius)) {
+      consider((annotation.x || 0) + annotation.radius, (annotation.y || 0) + annotation.radius);
+    }
+  }
+
+  if (!found || maxX === 0 || maxY === 0) return null;
+  return { width: maxX, height: maxY };
+}
+
+// sharp's extend() only accepts non-negative integers, so reject bad input here
+// rather than letting it surface as a low-level "Expected positive integer" error.
+function normalizePaddingSide(value, side) {
+  if (value === undefined || value === null || value === false) return 0;
+  const number = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(number)) {
+    throw new InvalidParameterError(`canvas padding "${side}" must be a number, received ${JSON.stringify(value)}`, 'canvas_padding');
+  }
+  if (number < 0) {
+    throw new InvalidParameterError(`canvas padding "${side}" must not be negative, received ${number}`, 'canvas_padding');
+  }
+  return Math.round(number);
+}
+
 function normalizeCanvasPadding(canvasPadding) {
-  if (typeof canvasPadding === 'number') {
-    return {
-      top: canvasPadding,
-      right: canvasPadding,
-      bottom: canvasPadding,
-      left: canvasPadding
-    };
+  if (canvasPadding === undefined || canvasPadding === null) {
+    return { top: 0, right: 0, bottom: 0, left: 0 };
   }
 
   if (canvasPadding && typeof canvasPadding === 'object') {
     return {
-      top: canvasPadding.top || 0,
-      right: canvasPadding.right || 0,
-      bottom: canvasPadding.bottom || 0,
-      left: canvasPadding.left || 0
+      top: normalizePaddingSide(canvasPadding.top, 'top'),
+      right: normalizePaddingSide(canvasPadding.right, 'right'),
+      bottom: normalizePaddingSide(canvasPadding.bottom, 'bottom'),
+      left: normalizePaddingSide(canvasPadding.left, 'left')
     };
   }
 
-  return { top: 0, right: 0, bottom: 0, left: 0 };
+  const uniform = normalizePaddingSide(canvasPadding, 'padding');
+  return { top: uniform, right: uniform, bottom: uniform, left: uniform };
 }
 
 function offsetAnnotationCoords(annotation, offsetX, offsetY) {
@@ -427,12 +673,21 @@ function clampAnnotations(annotations, imageWidth, imageHeight) {
     const annotation = annotations[i];
     const clamped = { ...annotation };
 
-    const clampValue = (property, min, max, original) => {
-      if (original === undefined || original === null || isNaN(original)) {
-        return min;
-      }
-      if (!isFinite(original)) {
-        return min;
+    // The object spread is shallow, so from/to would still alias the caller's
+    // arrays and get mutated in place by the clamping below. Copy them first.
+    if (Array.isArray(clamped.from)) clamped.from = [...clamped.from];
+    if (Array.isArray(clamped.to)) clamped.to = [...clamped.to];
+
+    // Positional fields must end up with *some* number or the SVG breaks, so an
+    // unusable value falls back to the minimum. Style fields instead get dropped
+    // so the renderer's own default applies. Either way it is now reported.
+    const DROP = Symbol('drop');
+
+    const clampValue = (property, min, max, original, onInvalid = min) => {
+      if (original === undefined || original === null || typeof original === 'boolean'
+          || isNaN(original) || !isFinite(original)) {
+        warnings.push(new CoordinateClampWarning(i, property, original, onInvalid === DROP ? 'default' : onInvalid));
+        return onInvalid;
       }
       if (original < min) {
         warnings.push(new CoordinateClampWarning(i, property, original, min));
@@ -453,15 +708,15 @@ function clampAnnotations(annotations, imageWidth, imageHeight) {
     }
     if (clamped.width !== undefined) {
       const maxWidth = imageWidth - (clamped.x || 0);
-      clamped.width = clampValue('width', 1, maxWidth, clamped.width);
+      clamped.width = clampValue('width', 1, maxWidth, clamped.width, DROP);
     }
     if (clamped.height !== undefined) {
       const maxHeight = imageHeight - (clamped.y || 0);
-      clamped.height = clampValue('height', 1, maxHeight, clamped.height);
+      clamped.height = clampValue('height', 1, maxHeight, clamped.height, DROP);
     }
     if (clamped.radius !== undefined) {
       const maxRadius = Math.min(imageWidth, imageHeight) / 2;
-      clamped.radius = clampValue('radius', 1, maxRadius, clamped.radius);
+      clamped.radius = clampValue('radius', 1, maxRadius, clamped.radius, DROP);
     }
 
     if (clamped.from && Array.isArray(clamped.from)) {
@@ -482,19 +737,26 @@ function clampAnnotations(annotations, imageWidth, imageHeight) {
     }
 
     if (clamped.size !== undefined) {
-      clamped.size = clampValue('size', 1, Infinity, clamped.size);
+      clamped.size = clampValue('size', 1, Infinity, clamped.size, DROP);
     }
     if (clamped.fontSize !== undefined) {
-      clamped.fontSize = clampValue('fontSize', 1, Infinity, clamped.fontSize);
+      clamped.fontSize = clampValue('fontSize', 1, Infinity, clamped.fontSize, DROP);
     }
     if (clamped.strokeWidth !== undefined) {
-      clamped.strokeWidth = clampValue('strokeWidth', 1, Infinity, clamped.strokeWidth);
+      clamped.strokeWidth = clampValue('strokeWidth', 1, Infinity, clamped.strokeWidth, DROP);
     }
     if (clamped.cornerRadius !== undefined) {
-      clamped.cornerRadius = clampValue('cornerRadius', 0, Infinity, clamped.cornerRadius);
+      clamped.cornerRadius = clampValue('cornerRadius', 0, Infinity, clamped.cornerRadius, DROP);
     }
     if (clamped.opacity !== undefined) {
-      clamped.opacity = clampValue('opacity', 0, 1, clamped.opacity);
+      clamped.opacity = clampValue('opacity', 0, 1, clamped.opacity, DROP);
+    }
+    if (clamped.blockSize !== undefined) {
+      clamped.blockSize = clampValue('blockSize', 1, Infinity, clamped.blockSize, DROP);
+    }
+
+    for (const key of Object.keys(clamped)) {
+      if (clamped[key] === DROP) delete clamped[key];
     }
 
     clampedAnnotations.push(clamped);
@@ -507,9 +769,16 @@ function getBoundingBox(annotation, sizePreset) {
   const preset = SIZE_PRESETS[sizePreset] || SIZE_PRESETS.m;
 
   switch (annotation.type) {
-    case 'marker': {
-      const radius = preset.markerSize / 2;
-      return { x: annotation.x - radius, y: annotation.y - radius, w: radius * 2, h: radius * 2 };
+    case 'marker':
+    case 'number': {
+      // createMarker draws the circle with r = size (not size / 2), and honours
+      // an explicit annotation.size over the preset, so the box must match that.
+      const size = typeof annotation.size === 'number' && isFinite(annotation.size)
+        ? annotation.size
+        : (preset.markerSize || SIZE_PRESETS.m.markerSize);
+      // The badge style widens to size * 2.4 once the number reaches two digits.
+      const halfWidth = annotation.style === 'badge' && annotation.number > 9 ? size * 1.2 : size;
+      return { x: annotation.x - halfWidth, y: annotation.y - size, w: halfWidth * 2, h: size * 2 };
     }
     case 'arrow':
     case 'curved-arrow': {
@@ -597,6 +866,7 @@ function getBoundingBox(annotation, sizePreset) {
       };
     }
     case 'blur':
+    case 'redact':
       return { x: annotation.x, y: annotation.y, w: annotation.width || 100, h: annotation.height || 60 };
     case 'connector': {
       const strokeWidth = annotation.strokeWidth || 5;
@@ -672,6 +942,10 @@ function detectCollisions(annotations, sizePreset) {
   const warnings = [];
   for (let i = 0; i < annotations.length; i++) {
     for (let j = i + 1; j < annotations.length; j++) {
+      // A redaction generated by redact_patterns overlaps the annotation it
+      // covers by design; warning about it would be pure noise.
+      if (annotations[i]._generatedFor === j || annotations[j]._generatedFor === i) continue;
+
       const a = getBoundingBox(annotations[i], sizePreset);
       const b = getBoundingBox(annotations[j], sizePreset);
       if (!a || !b) continue;
@@ -716,6 +990,7 @@ function getAnnotationAriaLabel(annotation, index) {
     case 'rect':
     case 'highlight':
     case 'blur':
+    case 'redact':
       return `${annotation.type} region ${position}`;
     case 'circle':
       return `Circle ${position}`;
@@ -803,6 +1078,15 @@ function validateAnnotation(annotation) {
       throw new ValidationError('spotlight annotations require x and y coordinates');
     }
   }
+  // A redaction region with an implicit position or size is dangerous - it
+  // could silently cover the wrong thing. All four fields are mandatory
+  // (breaking change for legacy blur calls that relied on 100x60 defaults).
+  if (annotation.type === 'redact' || annotation.type === 'blur') {
+    if (typeof annotation.x !== 'number' || typeof annotation.y !== 'number'
+        || typeof annotation.width !== 'number' || typeof annotation.height !== 'number') {
+      throw new ValidationError(`${annotation.type} annotations require numeric x, y, width, and height`);
+    }
+  }
   return true;
 }
 
@@ -839,6 +1123,8 @@ module.exports = {
   resolveOutputPathForFormat,
   getDefaultQuality,
   scaleAnnotationCoords,
+  remapAnnotation,
+  estimateDimensionsFromAnnotations,
   normalizeCanvasPadding,
   offsetAnnotationCoords,
   generateAltText,

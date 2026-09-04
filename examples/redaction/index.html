@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>打码示例 / Redaction Examples</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px 16px 60px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+    background: #f6f7f9; color: #1f2328; line-height: 1.6;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: #59636e; font-size: 14px; margin-bottom: 24px; }
+  section { background: #fff; border: 1px solid #d7dde3; border-radius: 12px; padding: 16px; margin-bottom: 20px; }
+  h2 { font-size: 17px; margin: 0 0 4px; }
+  .hint { color: #59636e; font-size: 13.5px; margin: 0 0 12px; }
+  img { width: 100%; height: auto; display: block; border: 1px solid #e3e8ee; border-radius: 8px; background: #fff; }
+  .note { font-size: 13px; color: #59636e; margin-top: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 4px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e3e8ee; vertical-align: top; }
+  th { color: #59636e; font-weight: 600; }
+  code { background: #eef1f4; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+  .ok { color: #1a7f37; font-weight: 600; }
+  .bad { color: #cf222e; font-weight: 600; }
+  ul { margin: 8px 0 0; padding-left: 20px; }
+  li { margin-bottom: 6px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>打码（Redaction）示例</h1>
+  <p class="sub">image-annotator-mcp v1.1.0 · 由 <code>examples/generate-redaction-example.js</code> 用真实管线生成</p>
+
+  <section>
+    <h2>0. 好看的打码：换颜色，不要换模式</h2>
+    <p class="hint">纯色填充可以是任何颜色，四种看起来差别很大，<strong>不可逆性完全一样</strong>。</p>
+    <img src="../redaction-styles.png" alt="solid 的四种配色">
+    <p class="note">默认值已从 D（#212121 黑条）改为 <strong>A（#64748B，slate 中间调）</strong>：比黑条柔和得多，同时和白色页面、深色导航栏都拉得开距离，不会像浅灰那样糊进背景里。标签文字颜色会自动跟随填充色亮度（深底白字 / 浅底深字），所以换成任何颜色都不会出现白字看不见的情况。</p>
+  </section>
+
+  <section>
+    <h2>1. 三种模式的差别</h2>
+    <p class="hint">同一行文字，三种 <code>mode</code>。只有 solid 是打码，另外两种只是视觉弱化——<strong>模糊看着柔和，但内容还在</strong>。</p>
+    <img src="../redaction-modes.png" alt="solid / pixelate / blur 三种模式对比">
+    <table>
+      <tr><th>模式</th><th>可逆性</th><th>用途</th></tr>
+      <tr><td><code>solid</code>（默认）</td><td class="ok">不可逆</td><td>敏感信息</td></tr>
+      <tr><td><code>pixelate</code></td><td class="bad">可逆</td><td>仅视觉弱化</td></tr>
+      <tr><td><code>blur</code></td><td class="bad">可逆</td><td>仅视觉弱化</td></tr>
+    </table>
+    <p class="note">放大看 pixelate 与 blur 两行：字词轮廓仍在。像素化保留块均值（Depix 类攻击可还原），高斯模糊是可逆卷积——不存在"调大参数就安全"的模糊。这两种模式每次使用都会产生运行时警告。</p>
+  </section>
+
+  <section>
+    <h2>2. 真实截图上的用法</h2>
+    <p class="hint">遮盖两处账号名，并用放大镜验证无法绕过。</p>
+    <img src="../redaction.png" alt="真实截图上的打码效果">
+    <p class="note">圆圈是 <code>magnifier</code>，target 直接对准被打码的区域。它取样的是<strong>已打码</strong>的图像，所以只看到填充色——旧实现里放大镜会从原图取样，可以把被遮内容放大展示出来。</p>
+  </section>
+
+  <section>
+    <h2>3. 使用规则</h2>
+    <ul>
+      <li>敏感内容<strong>只用</strong> <code>{"type":"redact"}</code> 的默认 <code>solid</code> 模式。</li>
+      <li><code>svg</code> 输出<strong>无法打码</strong>（标注层不含图像像素、且可被编辑删除）；<code>redact_patterns</code> 命中时会直接报错。</li>
+      <li><code>redact_patterns</code> 遮的是<strong>标注自身的文本框</strong>（含安全余量），不是截图里的原文——工具不做 OCR。</li>
+      <li>层序：<code>solid</code> 画在所有标注<strong>之上</strong>；<code>pixelate</code>/<code>blur</code> 作用于底图，标注仍绘制在其上。</li>
+      <li>⚠️ v1.1.0 之前用 <code>blur</code> "打码"过的截图<strong>并未被遮住</strong>，内容可完整还原，请重新生成。</li>
+    </ul>
+  </section>
+</div>
+</body>
+</html>

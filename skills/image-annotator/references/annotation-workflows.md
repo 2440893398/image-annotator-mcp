@@ -34,11 +34,12 @@ Simple text labels without pointers.
 {"type": "label", "x": 150, "y": 150, "text": "Settings Menu", "background": "white"}
 ```
 
-### 6. Blur
-Hide sensitive information like emails or API keys.
+### 6. Redact
+Hide sensitive information like emails or API keys. The default `solid` mode is the only irreversible option.
 ```json
-{"type": "blur", "x": 400, "y": 100, "width": 150, "height": 30}
+{"type": "redact", "x": 400, "y": 100, "width": 150, "height": 30, "label": "REDACTED"}
 ```
+`mode: "pixelate"` and `mode: "blur"` (and the legacy `blur` type) are reversible visual de-emphasis — never use them for sensitive content.
 
 ## Composing Multi-Annotation Arrays
 
@@ -70,4 +71,4 @@ For precise annotations on web UI, use Playwright to capture coordinates:
 - **Contrast**: Choose colors that stand out from the background.
 - **Consistency**: Use the same theme and color scheme throughout a document.
 - **Clarity**: Don't overcrowd the image; use multiple screenshots if needed.
-- **Redaction**: Always blur or redact sensitive data before sharing screenshots.
+- **Redaction**: Always cover sensitive data with `redact` (solid mode) before sharing screenshots — never blur/pixelate it — and visually verify the output.

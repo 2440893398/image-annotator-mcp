@@ -76,6 +76,15 @@ function request(opts) {
   });
 }
 
+// listen() is asynchronous, so server.address() is null until it fires.
+beforeAll((done) => {
+  if (server.listening) {
+    done();
+    return;
+  }
+  server.once('listening', () => done());
+});
+
 afterAll((done) => {
   server.close(done);
 });

@@ -26,14 +26,6 @@ const colorMap = {
   warning: '#FF9800'
 };
 
-// Theme font mapping
-const fontMap = {
-  documentation: 'Inter, sans-serif',
-  tutorial: 'Nunito, sans-serif',
-  bugReport: 'JetBrains Mono, monospace',
-  highlight: 'Noto Sans, sans-serif'
-};
-
 // Theme to marker color mapping
 const themeColorMap = {
   documentation: 'primary',
@@ -208,6 +200,7 @@ function updateUI() {
 function updatePreview() {
   // Get annotation color based on marker color selection
   const annotationColor = state.markerColor;
+  const themeFont = (THEMES[state.theme] && THEMES[state.theme].label.font) || null;
 
   // Resolve sizes: use getSizePreset when autoSize is enabled
   const PREVIEW_WIDTH = 250;
@@ -263,7 +256,9 @@ function updatePreview() {
       background: 'white',
       padding: 10,
       shadow: true,
-      handwriting: true
+      // Use the theme's font so the preview matches what annotate actually
+      // renders, rather than always falling back to the handwriting face.
+      font: themeFont
     }
   ];
 

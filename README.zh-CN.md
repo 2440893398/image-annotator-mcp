@@ -73,7 +73,7 @@ npm install
 ### `annotate_screenshot`
 为截图添加多个标注。
 
-支持位图输出（`png`、`jpeg`、`webp`、`avif`）以及标注层 `svg` 输出。还支持 `redact_patterns`，用于通过正则表达式对标注文本（仅限标签/标注框）进行脱敏。
+支持位图输出（`png`、`jpeg`、`webp`、`avif`）以及标注层 `svg` 输出。还支持 `redact_patterns`，用正则匹配标注文本并以实心矩形遮盖——**遮的是标注自身的文本框（含安全余量），不是截图底图中的原始内容**；不做 OCR；`svg` 输出下不可用。
 
 **标注类型：**
 - `marker` - 带渐变和阴影的数字圆形标记（1, 2, 3...）
@@ -84,13 +84,50 @@ npm install
 - `circle` - 圆形高亮
 - `label` - 带可选背景的文字标签
 - `highlight` - 半透明覆盖层
-- `blur` - 模糊敏感内容
+- `redact` - 遮盖区域（详见下方"打码"）
+- `blur` - 已弃用，等价于 `redact` 的 `mode: "blur"`（可逆的视觉弱化，不是隐私保护）
 - `connector` - 元素间的虚线连接
 - `icon` - 图标徽章（check、x、warning、info、question）
 
 **主题：** `documentation`、`tutorial`、`bugReport`、`highlight`
 
 **颜色：** red, orange, yellow, green, blue, purple, pink, cyan, teal, white, black, gray, lightGray, darkGray, success, warning, error, info, primary, secondary, accent
+
+### 打码（Redaction）
+
+```json
+{"type": "redact", "x": 100, "y": 100, "width": 200, "height": 24, "label": "已隐去"}
+```
+
+三种模式的保证完全不同：
+
+| 模式 | 可逆？ | 绘制位置 | 用途 |
+|------|--------|----------|------|
+| `solid`（默认） | **不可逆**——输出中该区域就是纯色填充 | 所有标注之上 | 敏感内容 |
+| `pixelate` | **可逆**——块均值可被 Depix 类攻击还原 | 底图上、标注之下 | 仅视觉弱化 |
+| `blur` | **可逆**——高斯模糊是可逆卷积 | 底图上、标注之下 | 仅视觉弱化 |
+
+默认填充色为 `#64748B`（slate 中间调）：比黑条柔和，同时和白色页面、深色导航栏都拉得开距离。`color` 可换成任意颜色——所有纯色填充的不可逆性完全一样。
+
+由此而来的规则：
+
+- **只有 `solid` 是打码。** `pixelate`/`blur` 每次使用都会产生警告；不存在"调大参数就安全"的模糊。
+- **层序差异是有意设计**：`solid` 遮盖其下的一切（包括其他标注）；`pixelate`/`blur` 作用于底图，标注仍绘制在其上。
+- **`svg` 输出无法打码**——它是不含图像像素的标注层。手放的 redact 产生警告；`redact_patterns` 命中时直接报错（匹配文本会以原文存在于文件中）。请改用 `png`/`jpeg`/`webp`。
+- **放大镜取样已打码的像素**：`magnifier` 指向打码区时显示填充色，不会泄漏原始内容。
+- `redact_patterns` 遮的是**标注自身的文本框**（含安全余量），不是截图里的文字——工具不做 OCR。分享前请目视核查打码输出。
+
+示例（用 `node examples/generate-redaction-example.js` 重新生成）：
+
+![打码模式对比](examples/redaction-modes.png)
+
+*同一行文字的三种模式。只有 `solid` 真正销毁了内容，`pixelate` 与 `blur` 仍保留着词形轮廓。*
+
+![真实截图上的打码](examples/redaction.png)
+
+*放大镜直接对准打码区，它取样的是已打码的像素，无法用来把被遮内容放大展示出来。*
+
+> ⚠️ **历史输出的信任说明**：v1.1.0 之前的 `blur` 只画了一层半透明灰色，内容清晰可辨且可完整还原。用旧版本"打码"过的截图请全部重新生成。详见 [CHANGELOG.md](CHANGELOG.md)。
 
 ### `get_image_dimensions`
 获取图片的宽度、高度和格式。计算标注坐标的必备工具。

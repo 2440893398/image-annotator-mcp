@@ -67,7 +67,7 @@ node annotate.js input.png guide.png --steps '[{"x":100,"y":100,"text":"Click he
 | `--quality` | - | JPEG/WebP quality (1-100) | `90` |
 | `--device-pixel-ratio` | - | Scale factor for Retina/HiDPI coordinates (e.g. 2) | `1` |
 | `--canvas-padding` | - | Extra canvas padding in pixels | `0` |
-| `--redact-patterns` | - | JSON array of regex strings to redact annotation text | `[]` |
+| `--redact-patterns` | - | JSON array of regex strings; matched label/callout text boxes are covered with solid redact rectangles (covers the annotation box, not screenshot content; errors with svg output) | `[]` |
 | `--help` | `-h` | Show help message | - |
 
 ## Output Formats

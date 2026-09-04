@@ -51,7 +51,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleReannotate(args);
       default:
         return {
-          content: [{ type: 'text', text: `Tool '${name}' is not available. If you were using highlight_area, add_callout, or blur_area, use annotate_screenshot with equivalent annotation types instead.\n\nExamples:\n• Blur: {"type":"blur","x":100,"y":100,"width":200,"height":50}\n• Highlight: {"type":"highlight","x":50,"y":50,"width":300,"height":100,"color":"yellow","opacity":0.35}\n• Callout: {"type":"callout","x":200,"y":200,"text":"Your note here","pointer":"bottom"}` }],
+          content: [{ type: 'text', text: `Tool '${name}' is not available. If you were using highlight_area, add_callout, or blur_area, use annotate_screenshot with equivalent annotation types instead.\n\nExamples:\n• Redact: {"type":"redact","x":100,"y":100,"width":200,"height":50,"label":"REDACTED"}\n• Highlight: {"type":"highlight","x":50,"y":50,"width":300,"height":100,"color":"yellow","opacity":0.35}\n• Callout: {"type":"callout","x":200,"y":200,"text":"Your note here","pointer":"bottom"}` }],
           isError: true
         };
     }
@@ -87,6 +87,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 process.on('exit', cleanupConfigServer);
+// 'exit' does not fire for signals, which is how MCP hosts normally stop us —
+// without these the spawned config-UI server is left orphaned.
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(signal, () => {
+    cleanupConfigServer();
+    process.exit(0);
+  });
+}
 
 async function main() {
   const transport = new StdioServerTransport();

@@ -30,3 +30,6 @@ Thumbs.db
 dist/
 build/
 *.tgz
+
+# Stale local test logs
+test_output.txt

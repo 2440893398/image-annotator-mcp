@@ -133,7 +133,10 @@ describe('annotate.js', () => {
         circle: [{ type: 'circle', x: 60, y: 60, radius: 30 }],
         label: [{ type: 'label', x: 20, y: 40, text: 'Label' }],
         highlight: [{ type: 'highlight', x: 15, y: 15, width: 90, height: 40, opacity: 0.35 }],
+        // blur is now a pixel operation on the base image; the SVG layer must
+        // stay empty for it (the old feGaussianBlur rect leaked its content).
         blur: [{ type: 'blur', x: 15, y: 15, width: 90, height: 40 }],
+        redact: [{ type: 'redact', x: 15, y: 15, width: 90, height: 40, label: 'REDACTED' }],
         connector: [{ type: 'connector', from: [20, 20], to: [120, 70] }],
         icon: [{ type: 'icon', x: 50, y: 50, icon: 'check' }]
       };
@@ -465,6 +468,224 @@ describe('annotate.js', () => {
     }, 15000);
   });
 
+  describe('magnifier compositing', () => {
+    const sharp = require('sharp');
+
+    // Four distinctly coloured quadrants make it obvious which source region
+    // ended up inside the magnifier circle.
+    async function writeQuadrantImage(targetPath, size = 200) {
+      const pixels = Buffer.alloc(size * size * 3);
+      const half = size / 2;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const i = (y * size + x) * 3;
+          const rgb = y < half
+            ? (x < half ? [255, 0, 0] : [0, 255, 0])
+            : (x < half ? [0, 0, 255] : [255, 255, 0]);
+          [pixels[i], pixels[i + 1], pixels[i + 2]] = rgb;
+        }
+      }
+      await sharp(pixels, { raw: { width: size, height: size, channels: 3 } }).png().toFile(targetPath);
+    }
+
+    function colorName([r, g, b]) {
+      if (r > 200 && g < 80 && b < 80) return 'red';
+      if (r < 80 && g > 200 && b < 80) return 'green';
+      if (r < 80 && g < 80 && b > 200) return 'blue';
+      if (r > 200 && g > 200 && b < 80) return 'yellow';
+      return `mixed(${r},${g},${b})`;
+    }
+
+    async function readPixels(imagePath) {
+      const { data, info } = await sharp(imagePath).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      return (x, y) => {
+        const i = (y * info.width + x) * 4;
+        return [data[i], data[i + 1], data[i + 2]];
+      };
+    }
+
+    async function countChangedPixels(originalPath, annotatedPath) {
+      const before = await sharp(originalPath).ensureAlpha().raw().toBuffer();
+      const after = await sharp(annotatedPath).ensureAlpha().raw().toBuffer();
+      let changed = 0;
+      for (let i = 0; i < before.length; i += 4) {
+        if (before[i] !== after[i] || before[i + 1] !== after[i + 1] || before[i + 2] !== after[i + 2]) changed++;
+      }
+      return changed;
+    }
+
+    // sharp's composite() replaces the layer list instead of appending, so
+    // compositing magnifiers in a loop used to drop the whole SVG layer.
+    it('still draws the other annotations when a magnifier is present', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'annotate-magnifier-'));
+      const inputPath = path.join(tempDir, 'input.png');
+      const withMagnifier = path.join(tempDir, 'with-magnifier.png');
+      await fs.promises.copyFile(path.join(__dirname, '..', 'fixtures', 'test-100x100.png'), inputPath);
+
+      await annotateImage(inputPath, withMagnifier, [
+        { type: 'marker', x: 20, y: 20, number: 1, size: 10 },
+        { type: 'magnifier', target: [50, 50], anchor: [75, 75], radius: 15, zoom: 2 }
+      ], {});
+
+      const pixelAt = await readPixels(withMagnifier);
+      // The marker paints its number in white over the solid red fixture.
+      expect(colorName(pixelAt(20, 20))).not.toBe('red');
+      expect(await countChangedPixels(inputPath, withMagnifier)).toBeGreaterThan(0);
+    }, 20000);
+
+    it('composites every magnifier rather than only the last one', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'annotate-magnifier-multi-'));
+      const inputPath = path.join(tempDir, 'input.png');
+      const outputPath = path.join(tempDir, 'output.png');
+      await writeQuadrantImage(inputPath);
+
+      await annotateImage(inputPath, outputPath, [
+        { type: 'magnifier', target: [50, 50], anchor: [150, 50], radius: 20, zoom: 2 },
+        { type: 'magnifier', target: [50, 150], anchor: [150, 150], radius: 20, zoom: 2 }
+      ], {});
+
+      const pixelAt = await readPixels(outputPath);
+      // Sample off the connector line, which runs through each anchor centre.
+      expect(colorName(pixelAt(150, 40))).toBe('red');
+      expect(colorName(pixelAt(150, 140))).toBe('blue');
+    }, 20000);
+
+    // A solid field with one small square marks a precise point in the source.
+    async function writeMarkedImage(targetPath, markX, markY, size = 200, half = 3) {
+      const pixels = Buffer.alloc(size * size * 3);
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const i = (y * size + x) * 3;
+          const marked = Math.abs(x - markX) <= half && Math.abs(y - markY) <= half;
+          pixels[i] = marked ? 255 : 0;
+          pixels[i + 1] = 0;
+          pixels[i + 2] = marked ? 0 : 255;
+        }
+      }
+      await sharp(pixels, { raw: { width: size, height: size, channels: 3 } }).png().toFile(targetPath);
+    }
+
+    // Bounding box of the magnified mark, restricted to the magnifier circle.
+    async function markExtentInCircle(imagePath, cx, cy, radius) {
+      const { data, info } = await sharp(imagePath).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      let minX = Infinity; let minY = Infinity; let maxX = -1; let maxY = -1;
+      for (let y = Math.max(0, cy - radius); y < Math.min(info.height, cy + radius); y++) {
+        for (let x = Math.max(0, cx - radius); x < Math.min(info.width, cx + radius); x++) {
+          if (Math.hypot(x - cx, y - cy) > radius) continue;
+          const i = (y * info.width + x) * 4;
+          if (data[i] > data[i + 2] + 30) {
+            minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+            minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+          }
+        }
+      }
+      if (maxX < 0) return null;
+      return { width: maxX - minX + 1, centerX: (minX + maxX) / 2, centerY: (minY + maxY) / 2 };
+    }
+
+    async function magnify(tempDir, markX, markY, zoom, anchor, radius) {
+      const inputPath = path.join(tempDir, `src-${markX}-${markY}-${zoom}.png`);
+      const outputPath = path.join(tempDir, `out-${markX}-${markY}-${zoom}.png`);
+      await writeMarkedImage(inputPath, markX, markY);
+      await annotateImage(inputPath, outputPath, [{
+        type: 'magnifier', target: [markX, markY], anchor, radius, zoom
+      }], {});
+      return markExtentInCircle(outputPath, anchor[0], anchor[1], radius);
+    }
+
+    // The window used to be slid inwards when it ran past an edge, so a target
+    // near a corner magnified a spot several pixels away from the one requested.
+    it('keeps the target centred in the circle even at the image edge', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'annotate-magnifier-edge-'));
+      const anchor = [120, 120];
+      const radius = 30;
+
+      for (const [markX, markY] of [[100, 100], [8, 8], [2, 100], [194, 194]]) {
+        const extent = await magnify(tempDir, markX, markY, 2, anchor, radius);
+        expect(extent).not.toBeNull();
+        expect(Math.abs(extent.centerX - anchor[0])).toBeLessThanOrEqual(2);
+        expect(Math.abs(extent.centerY - anchor[1])).toBeLessThanOrEqual(2);
+      }
+    }, 30000);
+
+    // A clipped window used to be stretched to fill the circle, which silently
+    // changed the zoom factor.
+    it('applies the same zoom factor at the edge as in the middle', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'annotate-magnifier-zoom-'));
+      const anchor = [120, 120];
+      const radius = 30;
+
+      for (const zoom of [2, 3, 4]) {
+        const middle = await magnify(tempDir, 100, 100, zoom, anchor, radius);
+        const corner = await magnify(tempDir, 8, 8, zoom, anchor, radius);
+        expect(corner.width).toBe(middle.width);
+      }
+    }, 30000);
+
+    it('scales the magnified mark in proportion to the zoom factor', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'annotate-magnifier-scale-'));
+      const anchor = [120, 120];
+      const radius = 30;
+      const SOURCE_WIDTH = 7;
+
+      const at2x = await magnify(tempDir, 100, 100, 2, anchor, radius);
+      const at4x = await magnify(tempDir, 100, 100, 4, anchor, radius);
+
+      // Each extra 1x of zoom widens the mark by exactly its source width.
+      expect(at4x.width - at2x.width).toBe(SOURCE_WIDTH * 2);
+    }, 30000);
+
+    it('leaves the out-of-image part of the window transparent', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'annotate-magnifier-clip-'));
+      const inputPath = path.join(tempDir, 'input.png');
+      const outputPath = path.join(tempDir, 'output.png');
+      // Mark placed off-canvas, so the source is a uniform blue field.
+      await writeMarkedImage(inputPath, 999, 999);
+
+      await annotateImage(inputPath, outputPath, [{
+        type: 'magnifier', target: [3, 3], anchor: [120, 120], radius: 30, zoom: 2
+      }], {});
+
+      // Two thirds of that window lie outside the image; the screenshot below
+      // must show through rather than a stretched copy of the visible sliver.
+      const pixelAt = await readPixels(outputPath);
+      const [r, g, b] = pixelAt(100, 100);
+      expect(b).toBeGreaterThan(200);
+      expect(r).toBeLessThan(80);
+      expect(g).toBeLessThan(150);
+    }, 20000);
+
+    // target/anchor are already shifted into padded-canvas space, but the
+    // extraction reads from the unpadded source image.
+    it('magnifies the same source region regardless of canvas padding', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'annotate-magnifier-pad-'));
+      const inputPath = path.join(tempDir, 'input.png');
+      await writeQuadrantImage(inputPath);
+
+      const padding = 60;
+      const annotations = () => [{ type: 'magnifier', target: [50, 50], anchor: [150, 150], radius: 30, zoom: 2 }];
+
+      const plain = path.join(tempDir, 'plain.png');
+      const padded = path.join(tempDir, 'padded.png');
+      await annotateImage(inputPath, plain, annotations(), {});
+      const paddedResult = await annotateImage(inputPath, padded, annotations(), { canvasPadding: padding });
+
+      expect(paddedResult.width).toBe(200 + padding * 2);
+
+      const plainAt = await readPixels(plain);
+      const paddedAt = await readPixels(padded);
+      // Offsets stay clear of the anchor-to-target connector line.
+      const offsets = [[15, -15], [-15, 15], [18, -8], [-8, 18]];
+      for (const [dx, dy] of offsets) {
+        expect(colorName(plainAt(150 + dx, 150 + dy))).toBe('red');
+        expect(colorName(paddedAt(150 + padding + dx, 150 + padding + dy))).toBe('red');
+      }
+      // ...and the untouched background outside the circle is still the source.
+      expect(colorName(plainAt(195, 150))).toBe('yellow');
+      expect(colorName(paddedAt(195 + padding, 150 + padding))).toBe('yellow');
+    }, 20000);
+  });
+
   describe('generateAltText', () => {
     it('describes mixed annotation sets with text details', () => {
       const altText = generateAltText([
@@ -575,15 +796,41 @@ describe('annotate.js', () => {
     it('should return bounding box for marker using sizePreset markerSize', () => {
       const ann = { type: 'marker', x: 100, y: 100 };
       const bb = getBoundingBox(ann, 'm');
-      // m preset: markerSize=32, r=16
-      expect(bb).toEqual({ x: 84, y: 84, w: 32, h: 32 });
+      // createMarker draws r = size, and size falls back to markerSize=32
+      expect(bb).toEqual({ x: 68, y: 68, w: 64, h: 64 });
     });
 
     it('should return bounding box for marker with xs preset', () => {
       const ann = { type: 'marker', x: 50, y: 50 };
       const bb = getBoundingBox(ann, 'xs');
-      // xs preset: markerSize=20, r=10
-      expect(bb).toEqual({ x: 40, y: 40, w: 20, h: 20 });
+      // xs preset: markerSize=20 -> r=20
+      expect(bb).toEqual({ x: 30, y: 30, w: 40, h: 40 });
+    });
+
+    it('should honour an explicit marker size over the preset', () => {
+      const bb = getBoundingBox({ type: 'marker', x: 100, y: 100, size: 100 }, 'm');
+      expect(bb).toEqual({ x: 0, y: 0, w: 200, h: 200 });
+    });
+
+    it('should match the circle createMarker actually draws', () => {
+      const ann = { type: 'marker', x: 100, y: 100, number: 1, size: 40 };
+      const bb = getBoundingBox(ann, 'm');
+      const svg = buildSvg(400, 400, [ann]);
+      const radius = Number(svg.match(/<circle cx="100" cy="100" r="(\d+)"/)[1]);
+      expect(bb.w).toBe(radius * 2);
+      expect(bb.h).toBe(radius * 2);
+    });
+
+    it('should widen the box for multi-digit badge markers', () => {
+      const bb = getBoundingBox({ type: 'marker', x: 100, y: 100, number: 12, size: 20, style: 'badge' }, 'm');
+      // createMarker uses size * 2.4 wide by size * 2 tall once number > 9
+      expect(bb.w).toBe(48);
+      expect(bb.h).toBe(40);
+    });
+
+    it('should treat the "number" type alias like a marker', () => {
+      expect(getBoundingBox({ type: 'number', x: 50, y: 50, size: 10 }, 'm'))
+        .toEqual({ x: 40, y: 40, w: 20, h: 20 });
     });
 
     it('should return bounding box for arrow using from/to endpoints', () => {
@@ -684,8 +931,8 @@ describe('annotate.js', () => {
     it('should default to m preset when sizePreset is invalid', () => {
       const ann = { type: 'marker', x: 100, y: 100 };
       const bb = getBoundingBox(ann, 'invalid');
-      // falls back to m: markerSize=32, r=16
-      expect(bb).toEqual({ x: 84, y: 84, w: 32, h: 32 });
+      // falls back to m: markerSize=32 -> r=32
+      expect(bb).toEqual({ x: 68, y: 68, w: 64, h: 64 });
     });
   });
 
@@ -700,10 +947,9 @@ describe('annotate.js', () => {
     });
 
     it('should detect collision between two overlapping markers', () => {
-      // m preset: markerSize=32, r=16
-      // marker at (100,100): bb = {x:84, y:84, w:32, h:32}
-      // marker at (110,110): bb = {x:94, y:94, w:32, h:32}
-      // overlap: x=94..116 ∩ 84..116 → x=94, w=22; y=94..126 ∩ 84..116 → y=94, h=22
+      // markerSize=32 -> r=32
+      // marker at (100,100): bb = {x:68, y:68, w:64, h:64}
+      // marker at (110,110): bb = {x:78, y:78, w:64, h:64}
       const annotations = [
         { type: 'marker', x: 100, y: 100 },
         { type: 'marker', x: 110, y: 110 }
@@ -721,9 +967,9 @@ describe('annotate.js', () => {
     });
 
     it('should return 0 warnings for non-overlapping markers', () => {
-      // m preset: markerSize=32, r=16
-      // marker at (100,100): bb = {x:84, y:84, w:32, h:32} → right edge at 116
-      // marker at (200,200): bb = {x:184, y:184, w:32, h:32} → no overlap
+      // markerSize=32 -> r=32
+      // marker at (100,100): bb = {x:68, y:68, w:64, h:64} -> right edge at 132
+      // marker at (200,200): bb = {x:168, y:168, w:64, h:64} -> no overlap
       const annotations = [
         { type: 'marker', x: 100, y: 100 },
         { type: 'marker', x: 200, y: 200 }
@@ -939,6 +1185,18 @@ describe('server.js reannotate_screenshot', () => {
       expect(dims).toEqual({ width: 800, height: 600 });
     });
 
+    it('estimates from leadout target and anchor points', () => {
+      const dims = estimateDimensionsFromAnnotations([
+        { type: 'leadout', target: [640, 480], anchor: [900, 720], text: 'x' }
+      ]);
+      expect(dims).toEqual({ width: 900, height: 720 });
+    });
+
+    it('returns null for a non-array input instead of throwing', () => {
+      expect(estimateDimensionsFromAnnotations(null)).toBeNull();
+      expect(estimateDimensionsFromAnnotations(undefined)).toBeNull();
+    });
+
     it('estimates from from/to arrow endpoints', () => {
       const dims = estimateDimensionsFromAnnotations([
         { type: 'arrow', from: [100, 50], to: [1200, 900] }
@@ -996,6 +1254,45 @@ describe('server.js reannotate_screenshot', () => {
       const result = remapAnnotation({ type: 'arrow', from: [100, 50], to: [300, 150] }, 2, 2);
       expect(result.from).toEqual([200, 100]);
       expect(result.to).toEqual([600, 300]);
+    });
+
+    // leadout and magnifier position themselves with target/anchor rather than
+    // x/y, so leaving those out left them pinned to the old screenshot's layout.
+    it('scales leadout target and anchor points', () => {
+      const result = remapAnnotation(
+        { type: 'leadout', target: [100, 100], anchor: [200, 50], text: 'Steel' }, 2, 2
+      );
+      expect(result.target).toEqual([200, 200]);
+      expect(result.anchor).toEqual([400, 100]);
+      expect(result.text).toBe('Steel');
+    });
+
+    it('scales magnifier target and anchor points independently per axis', () => {
+      const result = remapAnnotation(
+        { type: 'magnifier', target: [40, 60], anchor: [120, 30], radius: 20 }, 2, 0.5
+      );
+      expect(result.target).toEqual([80, 30]);
+      expect(result.anchor).toEqual([240, 15]);
+      expect(result.radius).toBe(10); // min(2, 0.5) = 0.5
+    });
+
+    it('remaps every coordinate field scaleAnnotationCoords knows about', () => {
+      const annotation = {
+        type: 'magnifier', x: 10, y: 10, width: 10, height: 10, radius: 10,
+        from: [10, 10], to: [20, 20], target: [30, 30], anchor: [40, 40]
+      };
+      const remapped = remapAnnotation(annotation, 2, 2);
+      const scaled = scaleAnnotationCoords(annotation, 2);
+      for (const field of ['x', 'y', 'width', 'height', 'radius', 'from', 'to', 'target', 'anchor']) {
+        expect(remapped[field]).toEqual(scaled[field]);
+      }
+    });
+
+    it('does not mutate the annotation it was given', () => {
+      const annotation = { type: 'leadout', target: [100, 100], anchor: [200, 50] };
+      const snapshot = JSON.stringify(annotation);
+      remapAnnotation(annotation, 4, 4);
+      expect(JSON.stringify(annotation)).toBe(snapshot);
     });
 
     it('scales radius by the minimum of sx/sy', () => {
@@ -1144,30 +1441,34 @@ describe('server.js reannotate_screenshot', () => {
   describe('applyRedactPatterns', () => {
     const { InvalidParameterError } = require('../../annotate-errors');
 
-    it('appends one blur annotation when a label text matches a pattern', () => {
+    it('appends one solid redact annotation when a label text matches a pattern', () => {
       const annotations = [
         { type: 'label', x: 50, y: 50, text: 'secret-token-abc' }
       ];
       const result = applyRedactPatterns(annotations, ['secret'], 'm');
       expect(result.length).toBe(2);
-      const blur = result[1];
-      expect(blur.type).toBe('blur');
-      expect(typeof blur.x).toBe('number');
-      expect(typeof blur.y).toBe('number');
-      expect(typeof blur.width).toBe('number');
-      expect(typeof blur.height).toBe('number');
+      const redact = result[1];
+      expect(redact.type).toBe('redact');
+      expect(redact.mode).toBe('solid');
+      expect(redact.label).toBe('REDACTED');
+      expect(redact._generatedFor).toBe(0);
+      expect(typeof redact.x).toBe('number');
+      expect(typeof redact.y).toBe('number');
+      expect(typeof redact.width).toBe('number');
+      expect(typeof redact.height).toBe('number');
     });
 
-    it('appends one blur annotation when a callout text matches a pattern', () => {
+    it('appends one solid redact annotation when a callout text matches a pattern', () => {
       const annotations = [
         { type: 'callout', x: 100, y: 100, text: 'password: hunter2' }
       ];
       const result = applyRedactPatterns(annotations, ['password'], 'm');
       expect(result.length).toBe(2);
-      expect(result[1].type).toBe('blur');
+      expect(result[1].type).toBe('redact');
+      expect(result[1].mode).toBe('solid');
     });
 
-    it('does not append blur when no annotation text matches', () => {
+    it('does not append a redaction when no annotation text matches', () => {
       const annotations = [
         { type: 'label', x: 50, y: 50, text: 'public info' }
       ];
@@ -1186,14 +1487,14 @@ describe('server.js reannotate_screenshot', () => {
       expect(annotations.length).toBe(1);
     });
 
-    it('adds only one blur per annotation even when multiple patterns match', () => {
+    it('adds only one redaction per annotation even when multiple patterns match', () => {
       const annotations = [
         { type: 'label', x: 50, y: 50, text: 'secret password' }
       ];
       const result = applyRedactPatterns(annotations, ['secret', 'password'], 'm');
-      // Only one blur for the single matching annotation
-      const blurs = result.filter((a) => a.type === 'blur');
-      expect(blurs.length).toBe(1);
+      // Only one redaction for the single matching annotation
+      const redactions = result.filter((a) => a.type === 'redact');
+      expect(redactions.length).toBe(1);
     });
 
     it('ignores annotations without a text field', () => {
@@ -1220,17 +1521,45 @@ describe('server.js reannotate_screenshot', () => {
       expect(result).toBe(annotations);
     });
 
-    it('integration: annotateImage with redactPatterns produces blur in SVG output', async () => {
-      // Use the SVG output format to avoid needing a real image file
-      // We need a real image; use the existing screenshotPath from the outer scope
-      // Instead, create a minimal PNG in memory via sharp
+    it('integration: annotateImage rejects redactPatterns matches with SVG output', async () => {
+      // An svg layer contains the matched text verbatim as <text>; a covering
+      // rectangle cannot conceal the file's own contents, so this must fail.
       const sharp = require('sharp');
       const os = require('os');
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'redact-test-'));
       const inputPath = path.join(tmpDir, 'input.png');
       const outputPath = path.join(tmpDir, 'output.svg');
 
-      // Create a 200x200 white PNG
+      await sharp({
+        create: { width: 200, height: 200, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } }
+      }).png().toFile(inputPath);
+
+      await expect(annotateImage(
+        inputPath,
+        outputPath,
+        [{ type: 'label', x: 50, y: 50, text: 'my-secret-token' }],
+        { outputFormat: 'svg', redactPatterns: ['secret'] }
+      )).rejects.toThrow(InvalidParameterError);
+
+      // Patterns that match nothing leak nothing extra: svg output still works.
+      const cleanResult = await annotateImage(
+        inputPath,
+        outputPath,
+        [{ type: 'label', x: 50, y: 50, text: 'public info' }],
+        { outputFormat: 'svg', redactPatterns: ['secret'] }
+      );
+      expect(cleanResult.annotationCount).toBe(1);
+
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('integration: annotateImage with redactPatterns counts the generated redaction in raster output', async () => {
+      const sharp = require('sharp');
+      const os = require('os');
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'redact-test-'));
+      const inputPath = path.join(tmpDir, 'input.png');
+      const outputPath = path.join(tmpDir, 'output.png');
+
       await sharp({
         create: { width: 200, height: 200, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } }
       }).png().toFile(inputPath);
@@ -1239,19 +1568,16 @@ describe('server.js reannotate_screenshot', () => {
         inputPath,
         outputPath,
         [{ type: 'label', x: 50, y: 50, text: 'my-secret-token' }],
-        { outputFormat: 'svg', redactPatterns: ['secret'] }
+        { redactPatterns: ['secret'] }
       );
 
-      // The SVG output should contain a blur filter (from the generated blur annotation)
-      const svgContent = fs.readFileSync(result.outputPath, 'utf8');
-      expect(svgContent).toContain('feGaussianBlur');
-
-      // annotationCount must reflect the auto-generated blur, not just the original input
-      // Input had 1 annotation; redaction appends 1 blur → final count must be 2
+      // Input had 1 annotation; redaction appends 1 solid redact → count is 2.
       expect(result.annotationCount).toBe(2);
-      expect(result.annotationCount).toBeGreaterThan(1);
+      // The intentional overlap between the redaction and the annotation it
+      // covers must not produce a collision warning.
+      const overlapWarnings = result.warnings.filter((w) => w.type === 'overlap');
+      expect(overlapWarnings).toEqual([]);
 
-      // Cleanup
       fs.rmSync(tmpDir, { recursive: true, force: true });
     });
   });

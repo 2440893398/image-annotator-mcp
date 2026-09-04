@@ -19,7 +19,7 @@ function openBrowser(url) {
   }
 }
 
-async function startConfigServer(workingDir) {
+async function startConfigServer(workingDir, port) {
   if (configServerProcess) {
     try {
       configServerProcess.kill();
@@ -29,7 +29,7 @@ async function startConfigServer(workingDir) {
     configServerProcess = null;
   }
 
-  const { url, process: child } = await launchConfigUI(workingDir);
+  const { url, process: child } = await launchConfigUI(workingDir, port);
   configServerProcess = child;
   child.on('exit', () => {
     configServerProcess = null;
@@ -53,7 +53,8 @@ function cleanupConfigServer() {
 async function handleOpenConfigUi(args) {
   try {
     const workingDir = args.working_directory || undefined;
-    const url = await startConfigServer(workingDir);
+    const port = args.port != null ? Number(args.port) : undefined;
+    const url = await startConfigServer(workingDir, port);
     const saveHint = workingDir
       ? `Config will be saved to: ${path.join(workingDir, '.image-annotator.json')}`
       : 'Config will be saved to .image-annotator.json in the MCP server directory (pass working_directory to save to your project instead).';

@@ -12,7 +12,8 @@ Annotation types available:
 • circle - Circle highlights
 • label - Text labels with optional backgrounds
 • highlight - Semi-transparent overlays
-• blur - Blur sensitive content
+• redact - Cover a region irreversibly (mode "solid", default). Modes "pixelate"/"blur" are REVERSIBLE visual de-emphasis only — never use them for sensitive content
+• blur - Deprecated alias for redact with mode "blur" (reversible de-emphasis, not privacy protection)
 • connector - Dashed lines between elements
 • icon - Icon badges (check, x, warning, info, question)
 • measure - Dimension measurement lines with tick marks and centered text
@@ -21,7 +22,7 @@ Annotation types available:
 • spotlight - Dark overlay with cutout to focus on a specific area
 
 Quick reference for common tasks:
-• Blur sensitive info: {"type":"blur","x":100,"y":100,"width":200,"height":50}
+• Redact sensitive info: {"type":"redact","x":100,"y":100,"width":200,"height":50,"label":"REDACTED"}
 • Highlight area: {"type":"highlight","x":50,"y":50,"width":300,"height":100,"color":"yellow","opacity":0.35}
 • Speech bubble: {"type":"callout","x":200,"y":200,"text":"Your note here","pointer":"bottom"}
 • Measurement: {"type":"measure","from":[100,200],"to":[300,200],"text":"76CM"}
@@ -89,7 +90,7 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
         redact_patterns: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Array of regex pattern strings. Any label or callout annotation whose text matches at least one pattern will have a blur annotation automatically appended over its bounding box. Matching is performed against annotation text only — no OCR or image scanning is performed.'
+          description: 'Array of regex pattern strings. Any label or callout annotation whose text matches at least one pattern is covered with a solid (irreversible) redact rectangle over its bounding box. This covers the annotation\'s own text box, NOT the original content in the underlying screenshot — matching is performed against annotation text only, no OCR or image scanning is performed. Not available with svg output (the matched text would remain readable in the file).'
         },
         annotations: {
           type: 'array',
@@ -99,9 +100,16 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
             properties: {
               type: {
                 type: 'string',
-                enum: ['marker', 'arrow', 'curved-arrow', 'callout', 'rect', 'circle', 'label', 'highlight', 'blur', 'connector', 'icon', 'measure', 'leadout', 'bracket-label', 'spotlight', 'magnifier'],
+                enum: ['marker', 'arrow', 'curved-arrow', 'callout', 'rect', 'circle', 'label', 'highlight', 'redact', 'blur', 'connector', 'icon', 'measure', 'leadout', 'bracket-label', 'spotlight', 'magnifier'],
                 description: 'Annotation type'
               },
+              mode: {
+                type: 'string',
+                enum: ['solid', 'pixelate', 'blur'],
+                description: 'Redact mode. "solid" (default, fill #64748B unless color is set) paints an opaque rectangle above all other annotations and is the only irreversible option — always use it for sensitive content. "pixelate" and "blur" alter the underlying image below the annotation layer and are REVERSIBLE visual de-emphasis, not privacy protection.'
+              },
+              blockSize: { type: 'number', minimum: 1, description: 'Block size in image pixels for redact mode "pixelate" (default: 12).' },
+              label: { type: 'string', description: 'Optional text drawn centered on a solid redact rectangle, e.g. "REDACTED".' },
               x: { type: 'number', minimum: 0, description: 'X coordinate of the annotation anchor in image pixels.' },
               y: { type: 'number', minimum: 0, description: 'Y coordinate of the annotation anchor in image pixels.' },
               number: { type: 'number', minimum: 1, description: 'Number for markers' },
@@ -112,8 +120,9 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
               anchor: { type: 'array', items: { type: 'number' }, description: '[x, y] anchor point for leadout/magnifier text placement' },
               direction: { type: 'string', enum: ['top', 'bottom', 'left', 'right'], description: 'Direction for bracket-label or callout pointer' },
               zoom: { type: 'number', minimum: 1, maximum: 10, description: 'Zoom factor for magnifier (default: 2)' },
-              width: { type: 'number', minimum: 0, description: 'Width of the annotation in image pixels. Use for rectangles, highlights, blur regions, and other box-based shapes.' },
-              height: { type: 'number', minimum: 0, description: 'Height of the annotation in image pixels. Use for rectangles, highlights, blur regions, and other box-based shapes.' },
+              width: { type: 'number', minimum: 0, description: 'Width of the annotation in image pixels. Use for rectangles, highlights, redact regions, and other box-based shapes. Required for redact/blur.' },
+              height: { type: 'number', minimum: 0, description: 'Height of the annotation in image pixels. Use for rectangles, highlights, redact regions, and other box-based shapes. Required for redact/blur.' },
+              intensity: { type: 'number', minimum: 0.3, description: 'Gaussian sigma for redact mode "blur" (default: 12). Blur is reversible; do not use it for sensitive content.' },
               radius: { type: 'number', minimum: 0, description: 'Radius in image pixels for circular annotations.' },
               color: { type: 'string' },
               background: { type: 'string' },

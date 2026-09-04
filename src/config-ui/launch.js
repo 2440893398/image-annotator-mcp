@@ -5,20 +5,25 @@
 const { spawn } = require('child_process');
 const path = require('path');
 
+const DEFAULT_PORT = 3456;
+
 /**
  * Launch the config UI server as a child process.
  *
  * @param {string|undefined} workingDir - Absolute path to use as cwd for the server.
  *   If omitted or not absolute, defaults to process.cwd().
+ * @param {number|undefined} port - Port for the server. Defaults to 3456.
  * @returns {Promise<string>} Resolves with the URL when the server is ready.
  */
-function launchConfigUI(workingDir) {
+function launchConfigUI(workingDir, port) {
   const cwd = workingDir && path.isAbsolute(workingDir) ? workingDir : process.cwd();
   const serverScript = path.join(__dirname, 'server.js');
+  const requestedPort = Number.isInteger(port) && port >= 0 && port <= 65535 ? String(port) : null;
 
   const child = spawn('node', [serverScript], {
     cwd,
-    stdio: 'pipe'
+    stdio: 'pipe',
+    env: requestedPort ? { ...process.env, PORT: requestedPort } : process.env
   });
 
   return new Promise((resolve, reject) => {
@@ -52,12 +57,14 @@ function launchConfigUI(workingDir) {
     });
 
     // Fallback after 3 seconds
-    setTimeout(() => {
+    const fallbackTimer = setTimeout(() => {
       if (!resolved) {
         resolved = true;
-        resolve({ url: 'http://localhost:3456', process: child });
+        resolve({ url: `http://localhost:${requestedPort || DEFAULT_PORT}`, process: child });
       }
     }, 3000);
+    // Do not keep the event loop alive just for the fallback.
+    if (typeof fallbackTimer.unref === 'function') fallbackTimer.unref();
   });
 }
 
@@ -80,9 +87,10 @@ async function main() {
   }
 
   const workingDir = argv['working-directory'] || undefined;
+  const port = argv.port != null ? Number(argv.port) : undefined;
 
   try {
-    const { url } = await launchConfigUI(workingDir);
+    const { url } = await launchConfigUI(workingDir, port);
     process.stdout.write(url + '\n');
   } catch (err) {
     process.stderr.write('Failed to start config UI: ' + err.message + '\n');

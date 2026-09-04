@@ -2,7 +2,13 @@
 
 const fs = require('fs');
 const minimist = require('minimist');
-const { annotateImage, getImageDimensions } = require('./runtime');
+const {
+  annotateImage,
+  getImageDimensions,
+  estimateDimensionsFromAnnotations,
+  remapAnnotation
+} = require('./runtime');
+const { buildStepGuideAnnotations } = require('./step-guide');
 
 async function main() {
   const args = minimist(process.argv.slice(2), {
@@ -27,8 +33,15 @@ Options:
   --quality               JPEG/WebP quality 1-100
   --device-pixel-ratio    Scale factor for Retina/HiDPI coordinates (e.g. 2)
   --canvas-padding        Extra canvas padding in pixels
-  --redact-patterns       JSON array of regex strings to redact annotation text
+  --redact-patterns       JSON array of regex strings; matched label/callout text
+                          boxes are covered with solid redact rectangles
+                          (annotation boxes only, no OCR; not usable with svg)
   --help, -h              Show this help message
+
+Redaction:
+  {"type":"redact","x":100,"y":100,"width":200,"height":24,"label":"REDACTED"}
+  Default mode "solid" is irreversible. Modes "pixelate"/"blur" are reversible
+  visual de-emphasis only - never use them for sensitive content.
 `);
     process.exit(0);
   }
@@ -92,20 +105,16 @@ async function runReannotateCommand(args) {
     const dims = await getImageDimensions(newScreenshot);
     const newWidth = dims.width;
     const newHeight = dims.height;
-    const srcWidth = previousWidth || newWidth;
-    const srcHeight = previousHeight || newHeight;
+    // Fall back to the same estimate the MCP tool uses when the caller did not
+    // pass the previous dimensions, instead of assuming a 1:1 scale.
+    const estimated = (previousWidth && previousHeight)
+      ? null
+      : estimateDimensionsFromAnnotations(previousAnnotations);
+    const srcWidth = previousWidth || (estimated && estimated.width) || newWidth;
+    const srcHeight = previousHeight || (estimated && estimated.height) || newHeight;
     const scaleX = newWidth / srcWidth;
     const scaleY = newHeight / srcHeight;
-    const remapped = previousAnnotations.map((annotation) => {
-      const remappedAnn = { ...annotation };
-      if (annotation.x != null) remappedAnn.x = Math.round(annotation.x * scaleX);
-      if (annotation.y != null) remappedAnn.y = Math.round(annotation.y * scaleY);
-      if (annotation.from) remappedAnn.from = [Math.round(annotation.from[0] * scaleX), Math.round(annotation.from[1] * scaleY)];
-      if (annotation.to) remappedAnn.to = [Math.round(annotation.to[0] * scaleX), Math.round(annotation.to[1] * scaleY)];
-      if (annotation.width != null) remappedAnn.width = Math.round(annotation.width * scaleX);
-      if (annotation.height != null) remappedAnn.height = Math.round(annotation.height * scaleY);
-      return remappedAnn;
-    });
+    const remapped = previousAnnotations.map((annotation) => remapAnnotation(annotation, scaleX, scaleY));
     console.log(JSON.stringify({ remappedAnnotations: remapped, newWidth, newHeight }, null, 2));
   } catch (err) {
     console.error('Error:', err.message);
@@ -140,20 +149,9 @@ async function runStepGuideCommand(args) {
   const theme = args.theme || null;
   const outputFormat = args['output-format'] || null;
   const quality = args.quality != null ? Number(args.quality) : undefined;
-  const colors = ['primary', 'green', 'orange', 'purple', 'cyan'];
-  const annotations = [];
-  steps.forEach((step, index) => {
-    const color = step.color || colors[index % colors.length];
-    annotations.push({ type: 'marker', x: step.x, y: step.y, number: index + 1, color, size: 24 });
-    const labelX = step.x + Math.round(50 * dpr);
-    const labelY = step.y;
-    annotations.push({ type: 'arrow', from: [step.x + Math.round(28 * dpr), step.y], to: [labelX - Math.round(5 * dpr), labelY], color, strokeWidth: 2 });
-    annotations.push({ type: 'label', x: labelX, y: labelY + Math.round(6 * dpr), text: step.label, color: 'darkGray', fontSize: 16, background: 'white', shadow: true });
-    const connectSteps = args['connect-steps'] !== false;
-    if (connectSteps && index < steps.length - 1) {
-      const next = steps[index + 1];
-      annotations.push({ type: 'connector', from: [step.x, step.y + Math.round(30 * dpr)], to: [next.x, next.y - Math.round(30 * dpr)], color: 'gray' });
-    }
+  const annotations = buildStepGuideAnnotations(steps, {
+    devicePixelRatio: dpr,
+    connectSteps: args['connect-steps'] !== false
   });
 
   try {

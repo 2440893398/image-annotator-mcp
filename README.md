@@ -7,7 +7,7 @@ Professional MCP server for annotating screenshots with markers, arrows, callout
 ## Features
 
 - **Hybrid Distribution**: Available as an MCP server, a standalone CLI tool, and a portable Skills package for coding agents
-- **Multiple Annotation Types**: Markers, arrows, callouts, rectangles, circles, labels, highlights, blur, connectors, and icons
+- **Multiple Annotation Types**: Markers, arrows, callouts, rectangles, circles, labels, highlights, redaction, connectors, and icons
 - **Professional Styling**: Gradient markers with shadows, customizable colors and themes
 - **Theme Support**: Pre-built themes for documentation, tutorials, bug reports, and highlights
 - **5 MCP Tools**: Annotation, dimensions, step guides, reannotation help, and config UI
@@ -80,7 +80,7 @@ This project is distributed in three complementary formats:
 ### `annotate_screenshot`
 Add multiple annotations to a screenshot image.
 
-Supports raster output (`png`, `jpeg`, `webp`, `avif`) plus annotation-layer `svg` output. Also supports `redact_patterns` for regex-based redaction of annotation text (labels/callouts only; no OCR).
+Supports raster output (`png`, `jpeg`, `webp`, `avif`) plus annotation-layer `svg` output. Also supports `redact_patterns` for regex-based redaction of annotation text (covers the matched annotation's own text box with a solid rectangle — not the underlying screenshot content; no OCR; not available with `svg` output).
 
 **Annotation Types:**
 - `marker` - Numbered circles (1, 2, 3...) with gradient and shadow
@@ -91,13 +91,50 @@ Supports raster output (`png`, `jpeg`, `webp`, `avif`) plus annotation-layer `sv
 - `circle` - Circle highlights
 - `label` - Text labels with optional backgrounds
 - `highlight` - Semi-transparent overlays
-- `blur` - Blur sensitive content
+- `redact` - Cover a region (see [Redaction](#redaction) below)
+- `blur` - Deprecated alias for `redact` with `mode: "blur"` (reversible de-emphasis, not privacy protection)
 - `connector` - Dashed lines between elements
 - `icon` - Icon badges (check, x, warning, info, question)
 
 **Themes:** `documentation`, `tutorial`, `bugReport`, `highlight`
 
 **Colors:** red, orange, yellow, green, blue, purple, pink, cyan, teal, white, black, gray, lightGray, darkGray, success, warning, error, info, primary, secondary, accent
+
+### Redaction
+
+```json
+{"type": "redact", "x": 100, "y": 100, "width": 200, "height": 24, "label": "REDACTED"}
+```
+
+Three modes with very different guarantees:
+
+| Mode | Reversible? | Drawn | Use for |
+|------|-------------|-------|---------|
+| `solid` (default) | **No** — the region becomes pure fill colour in the flattened output | Above every other annotation | Sensitive content |
+
+The default fill is `#64748B` (slate): softer than a black censor bar, but far enough from both white page backgrounds and dark app chrome to read as deliberate. Any `color` works — every solid fill is equally irreversible.
+| `pixelate` | **Yes** — block averages survive and can be attacked (Depix-style) | On the base image, below annotations | Visual de-emphasis only |
+| `blur` | **Yes** — Gaussian blur is an invertible convolution | On the base image, below annotations | Visual de-emphasis only |
+
+Rules that follow from this:
+
+- **Only `solid` redacts.** `pixelate`/`blur` produce a warning on every use; never rely on them to hide secrets. There is no blur strength that becomes safe.
+- **Layering differs by design**: `solid` covers anything under it (including other annotations); `pixelate`/`blur` alter the base image and annotations still draw on top.
+- **`svg` output cannot redact** — it is an annotation layer without image pixels. Hand-placed redact regions produce a warning; `redact_patterns` matches are rejected with an error (the matched text would sit verbatim in the file). Use `png`/`jpeg`/`webp`.
+- **Magnifiers sample redacted pixels**: a `magnifier` aimed at a redacted region shows the fill colour, not the original content.
+- `redact_patterns` boxes cover the **annotation's own text box** (with a safety margin), not text inside the screenshot — the tool performs no OCR. Visually verify redacted output before sharing.
+
+Examples (regenerate with `node examples/generate-redaction-example.js`):
+
+![Redaction modes](examples/redaction-modes.png)
+
+*The same line under all three modes. Only `solid` destroys the content; `pixelate` and `blur` leave word shapes intact.*
+
+![Redaction on a real screenshot](examples/redaction.png)
+
+*The magnifier is aimed straight at a redacted region and samples the redacted pixels, so it cannot be used to reveal what was covered.*
+
+> ⚠️ **Trust note for existing images**: before v1.1.0 the `blur` type drew a translucent grey wash that left content readable and recoverable. Any screenshot "redacted" with an earlier version should be regenerated. See [CHANGELOG.md](CHANGELOG.md).
 
 ### `get_image_dimensions`
 Get width, height, and format of an image. Essential for calculating annotation coordinates.
