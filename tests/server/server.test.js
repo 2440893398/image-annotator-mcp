@@ -122,7 +122,8 @@ describe('server.js', () => {
         quality: 75,
         devicePixelRatio: 2,
         canvasPadding: 50,
-        redactPatterns: ['secret']
+        redactPatterns: ['secret'],
+        autoLayout: false
       }
     );
     expect(result.alt_text).toBe('Annotated image (200x200): 1 marker');

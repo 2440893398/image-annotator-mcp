@@ -114,6 +114,50 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
           required: ['x', 'y', 'width', 'height'],
           additionalProperties: false
         },
+        background: {
+          description: 'CleanShot-style export card: place the (optionally cropped) screenshot on a color or gradient canvas with extra padding, rounded image corners, and a drop shadow. Stacks with canvas_padding. Not available with svg output. Pass a color string as shorthand for {"color": ...}.',
+          oneOf: [
+            { type: 'string', description: 'Background color (named preset or CSS color).' },
+            {
+              type: 'object',
+              properties: {
+                color: { type: 'string', description: 'Solid background color. Mutually exclusive with gradient.' },
+                gradient: {
+                  type: 'object',
+                  properties: {
+                    from: { type: 'string' },
+                    to: { type: 'string' },
+                    direction: { type: 'string', enum: ['to-bottom', 'to-right', 'to-bottom-right'], description: 'Default: to-bottom-right.' }
+                  },
+                  required: ['from', 'to'],
+                  additionalProperties: false
+                },
+                padding: { type: 'number', minimum: 0, description: 'Space between the image and the canvas edge (default: 48).' },
+                imageCornerRadius: { type: 'number', minimum: 0, description: 'Rounded corner radius applied to the screenshot (default: 12).' },
+                shadow: {
+                  description: 'Drop shadow under the screenshot card. true (default) for the standard shadow, false to disable, or an object to tune it.',
+                  oneOf: [
+                    { type: 'boolean' },
+                    {
+                      type: 'object',
+                      properties: {
+                        blur: { type: 'number', minimum: 0, description: 'Default: 24.' },
+                        opacity: { type: 'number', minimum: 0, maximum: 1, description: 'Default: 0.35.' },
+                        offsetY: { type: 'number', description: 'Default: 12.' }
+                      },
+                      additionalProperties: false
+                    }
+                  ]
+                }
+              },
+              additionalProperties: false
+            }
+          ]
+        },
+        auto_layout: {
+          type: 'boolean',
+          description: 'Opt-in collision avoidance: when a leadout label chip or callout bubble overlaps another annotation, its anchor is mirrored around the target (leadout) or its pointer direction flipped (callout) to the first free position. Off by default because it moves coordinates you supplied explicitly; each move is reported as a warning.'
+        },
         redact_patterns: {
           type: 'array',
           items: { type: 'string' },

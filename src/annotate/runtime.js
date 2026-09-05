@@ -22,6 +22,7 @@ const {
   getTextContentWidthPx,
   measureTextBlock,
   assignMarkerNumbers,
+  getColor,
   getLeadoutChipSize,
   escapeXml,
   buildSvg,
@@ -149,7 +150,19 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
     const distance = Math.hypot(annotation.to[0] - annotation.from[0], annotation.to[1] - annotation.from[1]) / devicePixelRatio;
     return { ...annotation, text: `${Math.round(distance)} px` };
   });
-  const padding = normalizeCanvasPadding(options.canvasPadding);
+  // Background padding stacks on top of canvas_padding: the annotation
+  // coordinate pipeline only ever sees one combined padding, so background
+  // needs no coordinate handling of its own.
+  const backgroundOpts = normalizeBackground(options.background);
+  let padding = normalizeCanvasPadding(options.canvasPadding);
+  if (backgroundOpts) {
+    padding = {
+      top: padding.top + backgroundOpts.padding,
+      right: padding.right + backgroundOpts.padding,
+      bottom: padding.bottom + backgroundOpts.padding,
+      left: padding.left + backgroundOpts.padding
+    };
+  }
   const extendedWidth = width + padding.left + padding.right;
   const extendedHeight = height + padding.top + padding.bottom;
   const offsetAnnotations = padding.left || padding.top
@@ -216,6 +229,12 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
     outputFormat
   };
 
+  if (outputFormat === 'svg' && backgroundOpts) {
+    throw new InvalidParameterError(
+      'background is a pixel-compositing feature (padding, rounded corners, shadow) and is not available with svg output. Use png, jpeg, webp, or avif.',
+      'background'
+    );
+  }
   if (outputFormat === 'svg' && generatedRedactionCount > 0) {
     // The whole point of redact_patterns is keeping matched text out of the
     // output, but an svg layer contains that text verbatim as <text> - no
@@ -237,8 +256,18 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
   // numbers that actually get drawn.
   validAnnotations = assignMarkerNumbers(validAnnotations);
 
+  let autoLayoutWarnings = [];
+  if (options.autoLayout === true) {
+    const resolvedLayout = resolveCollisions(validAnnotations, sizePreset, extendedWidth, extendedHeight);
+    validAnnotations = resolvedLayout.annotations;
+    autoLayoutWarnings = resolvedLayout.warnings;
+  }
+
   const collisionWarnings = detectCollisions(validAnnotations, sizePreset);
-  const warnings = [...clampWarnings, ...collisionWarnings, ...redactionWarnings];
+  const layoutHint = collisionWarnings.length > 0 && options.autoLayout !== true
+    ? [{ type: 'hint', message: `${collisionWarnings.length} overlap(s) detected. Set auto_layout: true to let leadout/callout labels move to a free position automatically.` }]
+    : [];
+  const warnings = [...clampWarnings, ...autoLayoutWarnings, ...collisionWarnings, ...layoutHint, ...redactionWarnings];
   const svg = buildSvg(extendedWidth, extendedHeight, validAnnotations, enhancedOptions);
   const optimizedSvg = optimizeSvg(svg);
   const altText = generateAltText(validAnnotations, extendedWidth, extendedHeight, enhancedOptions);
@@ -338,11 +367,35 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
     // so every layer has to be collected up front and passed in a single call.
     // De-emphasis patches go under the magnifier patches, which go under the
     // SVG (it draws their border ring and connector line on top of them).
-    pipeline = pipeline.composite([
-      ...baseLayers,
-      ...magnifierLayers,
-      { input: Buffer.from(optimizedSvg), top: 0, left: 0 }
-    ]);
+    if (backgroundOpts) {
+      // Bake the soft layers into the padded canvas, round the image-area
+      // corners (dest-in mask), then rebuild the stack bottom-up: background
+      // canvas, drop shadow, rounded screenshot card, magnifier patches,
+      // annotation SVG. Magnifiers sampled from the pre-rounded pixels above.
+      let padded = pipeline;
+      if (baseLayers.length > 0) padded = padded.composite(baseLayers);
+      const paddedBuffer = await padded.png().toBuffer();
+      const roundedBuffer = await sharp(paddedBuffer)
+        .composite([{ input: Buffer.from(buildRoundedCornerMaskSvg(backgroundOpts, padding, width, height, extendedWidth, extendedHeight)), blend: 'dest-in' }])
+        .png().toBuffer();
+      const backgroundBuffer = await buildBackgroundLayer(backgroundOpts, extendedWidth, extendedHeight);
+      const cardLayers = [];
+      if (backgroundOpts.shadow) {
+        cardLayers.push({ input: Buffer.from(buildBackgroundShadowSvg(backgroundOpts, padding, width, height, extendedWidth, extendedHeight)), top: 0, left: 0 });
+      }
+      cardLayers.push({ input: roundedBuffer, top: 0, left: 0 });
+      pipeline = sharp(backgroundBuffer).composite([
+        ...cardLayers,
+        ...magnifierLayers,
+        { input: Buffer.from(optimizedSvg), top: 0, left: 0 }
+      ]);
+    } else {
+      pipeline = pipeline.composite([
+        ...baseLayers,
+        ...magnifierLayers,
+        { input: Buffer.from(optimizedSvg), top: 0, left: 0 }
+      ]);
+    }
 
     if (outputFormat === 'webp') {
       pipeline = pipeline.webp({ quality });
@@ -653,6 +706,95 @@ function normalizePaddingSide(value, side) {
     throw new InvalidParameterError(`canvas padding "${side}" must not be negative, received ${number}`, 'canvas_padding');
   }
   return Math.round(number);
+}
+
+const BACKGROUND_GRADIENT_DIRECTIONS = {
+  'to-bottom': { x1: 0, y1: 0, x2: 0, y2: 1 },
+  'to-right': { x1: 0, y1: 0, x2: 1, y2: 0 },
+  'to-bottom-right': { x1: 0, y1: 0, x2: 1, y2: 1 }
+};
+
+/**
+ * Validate the top-level background option (CleanShot-style export card:
+ * padding + rounded image corners + drop shadow on a color/gradient canvas).
+ * Returns null when not requested.
+ */
+function normalizeBackground(background) {
+  if (background === undefined || background === null || background === false) return null;
+  if (typeof background === 'string') background = { color: background };
+  if (typeof background !== 'object' || Array.isArray(background)) {
+    throw new InvalidParameterError('background must be an object or a color string', 'background');
+  }
+  const { color, gradient } = background;
+  if (!color && !gradient) {
+    throw new InvalidParameterError('background requires a "color" or a "gradient"', 'background');
+  }
+  if (color && gradient) {
+    throw new InvalidParameterError('background accepts either "color" or "gradient", not both', 'background');
+  }
+  let normalizedGradient = null;
+  if (gradient) {
+    if (typeof gradient !== 'object' || !gradient.from || !gradient.to) {
+      throw new InvalidParameterError('background.gradient requires "from" and "to" colors', 'background');
+    }
+    const direction = gradient.direction || 'to-bottom-right';
+    if (!BACKGROUND_GRADIENT_DIRECTIONS[direction]) {
+      throw new InvalidParameterError(`background.gradient.direction must be one of ${Object.keys(BACKGROUND_GRADIENT_DIRECTIONS).join(', ')}`, 'background');
+    }
+    normalizedGradient = { from: getColor(gradient.from), to: getColor(gradient.to), direction };
+  }
+  const nonNegative = (value, name, fallback) => {
+    if (value === undefined || value === null) return fallback;
+    const n = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(n) || n < 0) {
+      throw new InvalidParameterError(`background.${name} must be a non-negative number, received ${JSON.stringify(value)}`, 'background');
+    }
+    return n;
+  };
+  let shadow = background.shadow === undefined ? true : background.shadow;
+  if (shadow === true) shadow = {};
+  const normalizedShadow = shadow
+    ? {
+      blur: nonNegative(shadow.blur, 'shadow.blur', 24),
+      opacity: Math.min(1, nonNegative(shadow.opacity, 'shadow.opacity', 0.35)),
+      offsetY: typeof shadow.offsetY === 'number' && Number.isFinite(shadow.offsetY) ? shadow.offsetY : 12
+    }
+    : null;
+  return {
+    color: color ? getColor(color) : null,
+    gradient: normalizedGradient,
+    padding: Math.round(nonNegative(background.padding, 'padding', 48)),
+    cornerRadius: Math.round(nonNegative(background.imageCornerRadius, 'imageCornerRadius', 12)),
+    shadow: normalizedShadow
+  };
+}
+
+async function buildBackgroundLayer(backgroundOpts, canvasWidth, canvasHeight) {
+  const svgNs = 'http://www.w3.org/2000/svg';
+  let fillMarkup;
+  let defs = '';
+  if (backgroundOpts.gradient) {
+    const { from, to, direction } = backgroundOpts.gradient;
+    const d = BACKGROUND_GRADIENT_DIRECTIONS[direction];
+    defs = `<defs><linearGradient id="bg" x1="${d.x1}" y1="${d.y1}" x2="${d.x2}" y2="${d.y2}"><stop offset="0" stop-color="${from}"/><stop offset="1" stop-color="${to}"/></linearGradient></defs>`;
+    fillMarkup = 'url(#bg)';
+  } else {
+    fillMarkup = backgroundOpts.color;
+  }
+  const svg = `<svg width="${canvasWidth}" height="${canvasHeight}" xmlns="${svgNs}">${defs}<rect width="${canvasWidth}" height="${canvasHeight}" fill="${fillMarkup}"/></svg>`;
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
+function buildBackgroundShadowSvg(backgroundOpts, padding, imageWidth, imageHeight, canvasWidth, canvasHeight) {
+  const { blur, opacity, offsetY } = backgroundOpts.shadow;
+  return `<svg width="${canvasWidth}" height="${canvasHeight}" xmlns="http://www.w3.org/2000/svg">
+  <defs><filter id="s" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="${blur / 2}"/></filter></defs>
+  <rect x="${padding.left}" y="${padding.top + offsetY}" width="${imageWidth}" height="${imageHeight}" rx="${backgroundOpts.cornerRadius}" fill="black" opacity="${opacity}" filter="url(#s)"/>
+</svg>`;
+}
+
+function buildRoundedCornerMaskSvg(backgroundOpts, padding, imageWidth, imageHeight, canvasWidth, canvasHeight) {
+  return `<svg width="${canvasWidth}" height="${canvasHeight}" xmlns="http://www.w3.org/2000/svg"><rect x="${padding.left}" y="${padding.top}" width="${imageWidth}" height="${imageHeight}" rx="${backgroundOpts.cornerRadius}" fill="#fff"/></svg>`;
 }
 
 /**
@@ -1087,6 +1229,75 @@ function getBoundingBox(annotation, sizePreset) {
   }
 }
 
+function boxesOverlap(a, b) {
+  return Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > 0
+    && Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > 0;
+}
+
+/**
+ * Opt-in collision resolution, limited to the two annotations whose label
+ * position is a stylistic choice rather than a pointer target: a leadout's
+ * anchor can mirror around its target, and a callout's pointer direction can
+ * flip. The first candidate that fits inside the canvas without touching any
+ * other bounding box wins; unsolvable cases stay where the caller put them.
+ */
+function resolveCollisions(annotations, sizePreset, canvasWidth, canvasHeight) {
+  const resolved = [...annotations];
+  const boxes = resolved.map((annotation) => getBoundingBox(annotation, sizePreset));
+  const warnings = [];
+
+  const collides = (box, selfIndex) => {
+    for (let i = 0; i < boxes.length; i++) {
+      if (i === selfIndex || !boxes[i]) continue;
+      if (boxesOverlap(box, boxes[i])) return true;
+    }
+    return false;
+  };
+  const fits = (box, selfIndex) => !!box && box.x >= 0 && box.y >= 0
+    && box.x + box.w <= canvasWidth && box.y + box.h <= canvasHeight
+    && !collides(box, selfIndex);
+
+  for (let i = 0; i < resolved.length; i++) {
+    const annotation = resolved[i];
+    if (!boxes[i] || !collides(boxes[i], i)) continue;
+
+    let candidates;
+    if (annotation.type === 'leadout' && Array.isArray(annotation.target) && Array.isArray(annotation.anchor)) {
+      const [tx, ty] = annotation.target;
+      const [ax, ay] = annotation.anchor;
+      candidates = [
+        { anchor: [2 * tx - ax, ay] },
+        { anchor: [ax, 2 * ty - ay] },
+        { anchor: [2 * tx - ax, 2 * ty - ay] }
+      ];
+    } else if (annotation.type === 'callout') {
+      const current = annotation.pointer || 'bottom';
+      const opposite = { bottom: 'top', top: 'bottom', left: 'right', right: 'left' }[current];
+      candidates = [opposite, ...['top', 'bottom', 'left', 'right'].filter((p) => p !== current && p !== opposite)]
+        .map((pointer) => ({ pointer }));
+    } else {
+      continue;
+    }
+
+    for (const change of candidates) {
+      const candidate = { ...annotation, ...change };
+      const candidateBox = getBoundingBox(candidate, sizePreset);
+      if (fits(candidateBox, i)) {
+        resolved[i] = candidate;
+        boxes[i] = candidateBox;
+        warnings.push({
+          type: 'auto-layout',
+          annotation: i,
+          message: `annotation #${i + 1} (${annotation.type}) was repositioned to avoid an overlap (${JSON.stringify(change)})`
+        });
+        break;
+      }
+    }
+  }
+
+  return { annotations: resolved, warnings };
+}
+
 function detectCollisions(annotations, sizePreset) {
   const warnings = [];
   for (let i = 0; i < annotations.length; i++) {
@@ -1301,6 +1512,8 @@ module.exports = {
   estimateDimensionsFromAnnotations,
   normalizeCanvasPadding,
   normalizeCrop,
+  normalizeBackground,
+  resolveCollisions,
   offsetAnnotationCoords,
   generateAltText,
   setIdGenerator,

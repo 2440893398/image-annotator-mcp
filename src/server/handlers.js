@@ -24,7 +24,7 @@ function getOutputPath(inputPath, suffix = '-annotated', outputFormat = null) {
 }
 
 async function handleAnnotate(args) {
-  const { input_path, output_path, annotations, theme, sketch, output_format, quality, device_pixel_ratio, canvas_padding, redact_patterns, crop } = args;
+  const { input_path, output_path, annotations, theme, sketch, output_format, quality, device_pixel_ratio, canvas_padding, redact_patterns, crop, background, auto_layout } = args;
 
   if (!fs.existsSync(input_path)) {
     throw new FileNotFoundError(input_path);
@@ -39,7 +39,9 @@ async function handleAnnotate(args) {
     devicePixelRatio: device_pixel_ratio,
     canvasPadding: canvas_padding,
     redactPatterns: redact_patterns,
-    crop
+    crop,
+    background,
+    autoLayout: auto_layout === true
   });
 
   const warningLines = result.warnings && result.warnings.length
@@ -49,7 +51,7 @@ async function handleAnnotate(args) {
         const { x, y, w, h } = warning.overlap;
         return `  Warning: Overlap detected between annotations #${i + 1} and #${j + 1} at ${x},${y} (${w}x${h})`;
       }
-      if (warning.type === 'redaction') {
+      if (warning.message) {
         return `  Warning: ${warning.message}`;
       }
       return `  Warning: ${warning.property} clamped from ${warning.original} to ${warning.clamped} (annotation #${warning.annotation + 1})`;

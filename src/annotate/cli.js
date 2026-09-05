@@ -12,8 +12,8 @@ const { buildStepGuideAnnotations } = require('./step-guide');
 
 async function main() {
   const args = minimist(process.argv.slice(2), {
-    string: ['annotations', 'theme', 'output-format', 'redact-patterns', 'crop'],
-    boolean: ['help', 'h', 'sketch'],
+    string: ['annotations', 'theme', 'output-format', 'redact-patterns', 'crop', 'background'],
+    boolean: ['help', 'h', 'sketch', 'auto-layout'],
     alias: { h: 'help', a: 'annotations', t: 'theme' }
   });
 
@@ -37,6 +37,10 @@ Options:
   --crop                  JSON {"x":..,"y":..,"width":..,"height":..} region (CSS px,
                           relative to the original image) to crop before annotating;
                           annotation coordinates stay in original-image space
+  --background            Color string or JSON {"color"|"gradient":..,"padding":..,
+                          "imageCornerRadius":..,"shadow":..} export card (padding,
+                          rounded corners, drop shadow on a colored canvas)
+  --auto-layout           Move overlapping leadout/callout labels to a free position
   --redact-patterns       JSON array of regex strings; matched label/callout text
                           boxes are covered with solid redact rectangles
                           (annotation boxes only, no OCR; not usable with svg)
@@ -220,6 +224,21 @@ async function runAnnotateCommand(args) {
     }
   }
 
+  let background;
+  if (args.background) {
+    const raw = String(args.background);
+    if (raw.trim().startsWith('{')) {
+      try {
+        background = JSON.parse(raw);
+      } catch (e) {
+        console.error('Error parsing background JSON:', e.message);
+        process.exit(1);
+      }
+    } else {
+      background = raw; // plain color string shorthand
+    }
+  }
+
   try {
     const result = await annotateImage(inputPath, outputPath, annotations, {
       theme,
@@ -229,7 +248,9 @@ async function runAnnotateCommand(args) {
       devicePixelRatio,
       canvasPadding,
       redactPatterns,
-      crop
+      crop,
+      background,
+      autoLayout: args['auto-layout'] === true
     });
     console.log(`✓ Annotated image saved: ${result.outputPath}`);
     console.log(`  Dimensions: ${result.width}x${result.height}`);
