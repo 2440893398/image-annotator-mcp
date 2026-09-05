@@ -20,11 +20,14 @@ const {
   handleReannotate
 } = require('./handlers');
 const { cleanupConfigServer, handleOpenConfigUi } = require('./config-ui');
+// Single source of truth: a hardcoded string here silently reports a stale
+// version to every MCP client after a release bump.
+const { version: SERVER_VERSION } = require('../../package.json');
 
 const server = new Server(
   {
     name: 'image-annotator',
-    version: '1.0.0'
+    version: SERVER_VERSION
   },
   {
     capabilities: {
@@ -99,7 +102,7 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Image Annotator MCP Server v1.0.0 running...');
+  console.error(`Image Annotator MCP Server v${SERVER_VERSION} running...`);
 }
 
 module.exports = {
