@@ -552,6 +552,9 @@ function scaleAnnotationCoords(annotation, dpr) {
   if (Array.isArray(scaled.to)) scaled.to = scaled.to.map(scaleValue);
   if (Array.isArray(scaled.target)) scaled.target = scaled.target.map(scaleValue);
   if (Array.isArray(scaled.anchor)) scaled.anchor = scaled.anchor.map(scaleValue);
+  if (Array.isArray(scaled.points)) {
+    scaled.points = scaled.points.map((point) => Array.isArray(point) ? point.map(scaleValue) : point);
+  }
 
   return scaled;
 }
@@ -582,6 +585,7 @@ function remapAnnotation(annotation, scaleX, scaleY) {
   for (const field of POINT_FIELDS) {
     if (scaled[field]) scaled[field] = scalePoint(scaled[field]);
   }
+  if (Array.isArray(scaled.points)) scaled.points = scaled.points.map(scalePoint);
 
   return scaled;
 }
@@ -608,6 +612,12 @@ function estimateDimensionsFromAnnotations(annotations) {
     for (const field of POINT_FIELDS) {
       const point = annotation[field];
       if (Array.isArray(point) && point.length >= 2) consider(point[0], point[1]);
+    }
+
+    if (Array.isArray(annotation.points)) {
+      for (const point of annotation.points) {
+        if (Array.isArray(point) && point.length >= 2) consider(point[0], point[1]);
+      }
     }
 
     if (typeof annotation.width === 'number' && isFinite(annotation.width)) {
@@ -712,6 +722,11 @@ function offsetAnnotationCoords(annotation, offsetX, offsetY) {
   if (Array.isArray(shifted.to)) shifted.to = [shifted.to[0] + offsetX, shifted.to[1] + offsetY];
   if (Array.isArray(shifted.target)) shifted.target = [shifted.target[0] + offsetX, shifted.target[1] + offsetY];
   if (Array.isArray(shifted.anchor)) shifted.anchor = [shifted.anchor[0] + offsetX, shifted.anchor[1] + offsetY];
+  if (Array.isArray(shifted.points)) {
+    shifted.points = shifted.points.map((point) => Array.isArray(point)
+      ? [point[0] + offsetX, point[1] + offsetY, ...point.slice(2)]
+      : point);
+  }
   return shifted;
 }
 
@@ -832,6 +847,19 @@ function clampAnnotations(annotations, imageWidth, imageHeight) {
       if (clamped.to[1] !== undefined) {
         clamped.to[1] = clampValue('to[1]', 0, imageHeight, clamped.to[1]);
       }
+    }
+
+    if (Array.isArray(clamped.points)) {
+      clamped.points = clamped.points.map((point) => Array.isArray(point) ? [...point] : point);
+      clamped.points.forEach((point, pointIndex) => {
+        if (!Array.isArray(point)) return;
+        if (point[0] !== undefined) {
+          point[0] = clampValue(`points[${pointIndex}][0]`, 0, imageWidth, point[0]);
+        }
+        if (point[1] !== undefined) {
+          point[1] = clampValue(`points[${pointIndex}][1]`, 0, imageHeight, point[1]);
+        }
+      });
     }
 
     if (clamped.size !== undefined) {
@@ -1015,6 +1043,18 @@ function getBoundingBox(annotation, sizePreset) {
       const maxY = Math.max(ty + dotPad, ay + chip.height / 2);
       return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
     }
+    case 'polyline':
+    case 'polygon':
+    case 'freehand': {
+      const points = Array.isArray(annotation.points) ? annotation.points.filter((p) => Array.isArray(p) && p.length >= 2) : [];
+      if (points.length === 0) return null;
+      const sw = annotation.strokeWidth || 4;
+      const xs = points.map((p) => p[0]);
+      const ys = points.map((p) => p[1]);
+      const minX = Math.min(...xs);
+      const minY = Math.min(...ys);
+      return { x: minX - sw, y: minY - sw, w: (Math.max(...xs) - minX) + sw * 2, h: (Math.max(...ys) - minY) + sw * 2 };
+    }
     case 'bracket-label': {
       const [bx1, by1] = annotation.from || [0, 0];
       const [bx2, by2] = annotation.to || [0, 0];
@@ -1105,6 +1145,10 @@ function getAnnotationAriaLabel(annotation, index) {
       return `Circle ${position}`;
     case 'ellipse':
       return `Ellipse ${position}`;
+    case 'polyline':
+    case 'polygon':
+    case 'freehand':
+      return `${annotation.type} with ${Array.isArray(annotation.points) ? annotation.points.length : 0} points`;
     case 'connector':
       return `Connector ${position}`;
     case 'icon':
@@ -1187,6 +1231,15 @@ function validateAnnotation(annotation) {
   if (annotation.type === 'spotlight') {
     if (typeof annotation.x !== 'number' || typeof annotation.y !== 'number') {
       throw new ValidationError('spotlight annotations require x and y coordinates');
+    }
+  }
+  if (annotation.type === 'polyline' || annotation.type === 'polygon' || annotation.type === 'freehand') {
+    const minPoints = annotation.type === 'polygon' ? 3 : 2;
+    const valid = Array.isArray(annotation.points)
+      ? annotation.points.filter((p) => Array.isArray(p) && typeof p[0] === 'number' && typeof p[1] === 'number')
+      : [];
+    if (valid.length < minPoints) {
+      throw new ValidationError(`${annotation.type} annotations require a points array with at least ${minPoints} [x, y] pairs`);
     }
   }
   if (annotation.type === 'ellipse') {

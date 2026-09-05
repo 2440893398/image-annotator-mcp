@@ -16,10 +16,12 @@ Annotation types available:
 • redact - Cover a region irreversibly (mode "solid", default). Modes "pixelate"/"blur" are REVERSIBLE visual de-emphasis only — never use them for sensitive content
 • blur - Deprecated alias for redact with mode "blur" (reversible de-emphasis, not privacy protection)
 • connector - Dashed lines between elements
-• icon - Icon badges (check, x, warning, info, question)
+• polyline / polygon - Open or closed multi-point shapes for irregular regions
+• freehand - Freehand stroke through a points array (hand-drawn look in sketch mode)
+• icon - Icon badges (check, x, warning, info, question, lock, star, cursor, thumbs-up, thumbs-down, plus, minus, eye) or any emoji character passed directly
 • measure - Dimension measurement lines with tick marks and centered text; omit "text" to auto-show the measured px distance
 • leadout - Leader line callout: ringed dot at target, 45° elbow line, filled label chip at anchor
-• bracket-label - Bracket annotation grouping an area with a label
+• bracket-label - Square or curly bracket ("bracketStyle") grouping an area with a label
 • spotlight - Dark overlay with cutout to focus on a specific area
 • magnifier - Circular zoomed-in patch of the target area placed at the anchor
 
@@ -125,7 +127,7 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
             properties: {
               type: {
                 type: 'string',
-                enum: ['marker', 'arrow', 'curved-arrow', 'callout', 'rect', 'circle', 'ellipse', 'label', 'highlight', 'redact', 'blur', 'connector', 'icon', 'measure', 'leadout', 'bracket-label', 'spotlight', 'magnifier'],
+                enum: ['marker', 'arrow', 'curved-arrow', 'callout', 'rect', 'circle', 'ellipse', 'polyline', 'polygon', 'freehand', 'label', 'highlight', 'redact', 'blur', 'connector', 'icon', 'measure', 'leadout', 'bracket-label', 'spotlight', 'magnifier'],
                 description: 'Annotation type'
               },
               mode: {
@@ -140,6 +142,12 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
               number: { type: 'number', minimum: 1, description: 'Number for markers. May be omitted: markers auto-increment from 1 in array order, and an explicit number sets the cursor for the ones after it ([auto, auto, 10, auto] renders 1, 2, 10, 11).' },
               text: { type: 'string', description: 'Text for labels/callouts. Use \\n for manual line breaks; set maxWidth (or callout width) for automatic wrapping. For measure, omit to auto-display the measured distance in logical px.' },
               maxWidth: { type: 'number', minimum: 1, description: 'Maximum text width in image pixels for callout/label/leadout; longer text wraps automatically (CJK breaks per character, latin at word boundaries). Unset = no wrapping.' },
+              points: {
+                type: 'array',
+                items: { type: 'array', items: { type: 'number' }, minItems: 2 },
+                description: 'Array of [x, y] pairs for polyline/polygon/freehand (polygon needs at least 3).'
+              },
+              closed: { type: 'boolean', description: 'freehand only: connect the last point back to the first (default: false).' },
               from: { type: 'array', items: { type: 'number' }, description: '[x, y] start point' },
               to: { type: 'array', items: { type: 'number' }, description: '[x, y] end point' },
               target: { type: 'array', items: { type: 'number' }, description: '[x, y] target point for leadout annotations' },
@@ -164,9 +172,11 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
               heads: { type: 'string', enum: ['end', 'start', 'both', 'none'], description: 'Which ends of an arrow get a head (default: "end"). "both" makes a double-headed arrow for ranges/relationships; "none" is a plain shaft.' },
               variant: { type: 'string', enum: ['soft', 'filled', 'outline'], description: 'Leadout label chip style. "soft" (default): light tint of the accent with accent border and dark text — calm and readable. "filled": solid accent chip with auto-contrast text for maximum emphasis. "outline": white chip with accent border.' },
               lineStyle: { type: 'string', enum: ['elbow', 'straight'], description: 'Leader/shaft routing for leadout and arrow. "elbow" (leadout default) leaves the start at 45° then runs axis-aligned; "straight" (arrow default) connects directly. Use elbow arrows to route around content.' },
-              halo: { type: 'boolean', description: 'Leadout only: draw a white casing under the leader line and target dot so they stay legible over busy content (default: true).' },
+              halo: { type: 'boolean', description: 'Draw a white casing under the graphic so it stays legible over busy content. Default true for leadout, false elsewhere. Supported by leadout, arrow/curved-arrow/connector (clean rendering, shaft only), marker (outer white ring), and background-less labels.' },
+              bracketStyle: { type: 'string', enum: ['square', 'curly'], description: 'bracket-label shape: right-angled square bracket (default) or typographic curly brace.' },
               pointer: { type: 'string', enum: ['top', 'bottom', 'left', 'right'] },
-              icon: { type: 'string', enum: ['check', 'x', 'warning', 'info', 'question'] },
+              icon: { type: 'string', description: 'Built-in icon name (check, x, warning, info, question, lock, star, cursor, thumbs-up, thumbs-down, plus, minus, eye) or any emoji character, which is rendered directly without the badge circle (opt back in with "badge": true). Emoji rendering depends on the host OS emoji font.' },
+              badge: { type: 'boolean', description: 'Emoji icons only: draw the colored badge circle behind the emoji (default: false; named icons always have it).' },
               shadow: { type: 'boolean' },
               sketch: { type: 'boolean', description: 'Hand-drawn rendering for this annotation (overrides the top-level sketch flag; ignored by redact/blur).' },
               roughness: { type: 'number', minimum: 0, maximum: 5, description: 'Sketch wobble amount (default 1, Excalidraw "artist"). 0.5 is subtle, 2+ is cartoonish.' },

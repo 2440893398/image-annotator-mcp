@@ -35,11 +35,12 @@ describe('server.js', () => {
     const annotateTool = serverModule.tools.find((tool) => tool.name === 'annotate_screenshot');
     const itemProps = annotateTool.inputSchema.properties.annotations.items.properties;
     expect(itemProps.type.enum).toEqual([
-      'marker', 'arrow', 'curved-arrow', 'callout', 'rect', 'circle', 'ellipse', 'label',
+      'marker', 'arrow', 'curved-arrow', 'callout', 'rect', 'circle', 'ellipse',
+      'polyline', 'polygon', 'freehand', 'label',
       'highlight', 'redact', 'blur', 'connector', 'icon', 'measure', 'leadout',
       'bracket-label', 'spotlight', 'magnifier'
     ]);
-    for (const field of ['headStyle', 'heads', 'fill', 'fillStyle', 'padding', 'fontWeight', 'borderColor', 'rx', 'ry', 'maxWidth', 'lineStyle']) {
+    for (const field of ['headStyle', 'heads', 'fill', 'fillStyle', 'padding', 'fontWeight', 'borderColor', 'rx', 'ry', 'maxWidth', 'lineStyle', 'points', 'closed', 'badge', 'bracketStyle', 'halo']) {
       expect(itemProps[field]).toBeDefined();
     }
     expect(annotateTool.inputSchema.properties.crop).toBeDefined();

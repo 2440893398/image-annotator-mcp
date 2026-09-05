@@ -469,7 +469,7 @@ function createDropShadow(id, blur = 4, opacity = 0.3, dx = 2, dy = 2) {
   `;
 }
 
-function createMarker({ x, y, number = 1, color = 'red', size = 32, shadow = true, style = 'filled', sketch = false, roughness = 1, seed = 1 }) {
+function createMarker({ x, y, number = 1, color = 'red', size = 32, shadow = true, style = 'filled', halo = false, sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
 
   if (sketch === true) {
@@ -490,9 +490,13 @@ function createMarker({ x, y, number = 1, color = 'red', size = 32, shadow = tru
       : sketchShape('circle', [x, y, size * 2], opts);
     if (shape) {
       const textColor = solid ? getRedactLabelColor(c) : c;
+      // Crisp white casing under the wobbly shape, same trick as the leadout dot.
+      const casing = halo !== true ? '' : (isBadge
+        ? `<rect x="${x - badgeWidth / 2 - 3}" y="${y - size - 3}" width="${badgeWidth + 6}" height="${size * 2 + 6}" rx="${size + 3}" fill="rgba(255,255,255,0.9)"/>\n`
+        : `<circle cx="${x}" cy="${y}" r="${size + 3}" fill="rgba(255,255,255,0.9)"/>\n`);
       const numeral = `<text x="${x}" y="${y + size * 0.35}" text-anchor="middle" fill="${textColor}"
             font-size="${size * 0.9}" font-weight="bold" font-family="${HANDWRITING_FONT}">${escapeXml(number)}</text>`;
-      return { defs: '', element: shape + '\n' + numeral };
+      return { defs: '', element: casing + shape + '\n' + numeral };
     }
   }
 
@@ -513,6 +517,16 @@ function createMarker({ x, y, number = 1, color = 'red', size = 32, shadow = tru
   `);
 
   const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+
+  if (halo === true) {
+    if (style === 'badge') {
+      const haloWidth = (number > 9 ? size * 2.4 : size * 2) + 6;
+      const haloHeight = size * 2 + 6;
+      elements.push(`<rect x="${x - haloWidth / 2}" y="${y - haloHeight / 2}" width="${haloWidth}" height="${haloHeight}" rx="${haloHeight / 2}" fill="rgba(255,255,255,0.9)"/>`);
+    } else {
+      elements.push(`<circle cx="${x}" cy="${y}" r="${size + 3}" fill="rgba(255,255,255,0.9)"/>`);
+    }
+  }
 
   if (style === 'filled') {
     elements.push(`
@@ -551,7 +565,7 @@ function sketchArrowHead(x2, y2, angle, headSize, opts) {
   return head1 && head2 ? head1 + '\n' + head2 : null;
 }
 
-function createArrow({ from, to, color = 'red', strokeWidth = 2, style = 'solid', headStyle = 'filled', heads = 'end', lineStyle = 'straight', shadow = true, sketch = false, roughness = 1, seed = 1 }) {
+function createArrow({ from, to, color = 'red', strokeWidth = 2, style = 'solid', headStyle = 'filled', heads = 'end', lineStyle = 'straight', halo = false, shadow = true, sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
   const [x1, y1] = from;
   const [x2, y2] = to;
@@ -642,14 +656,21 @@ function createArrow({ from, to, color = 'red', strokeWidth = 2, style = 'solid'
     wantEnd ? `marker-end="url(#${id}-head)"` : ''
   ].filter(Boolean).join(' ');
 
+  // White casing (same recipe as leadout) keeps the shaft legible over busy
+  // content. Heads are not cased in v1. Clean rendering only.
+  const shaftPathD = points.length > 2 ? leadoutPointsToPath(points) : null;
+  const haloMarkup = halo !== true ? '' : (shaftPathD
+    ? `<path d="${shaftPathD}" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="${strokeWidth + 3}" stroke-linecap="round" stroke-linejoin="round"/>\n    `
+    : `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="rgba(255,255,255,0.9)" stroke-width="${strokeWidth + 3}" stroke-linecap="round"/>\n    `);
+
   const element = points.length > 2
     ? `
-    <path d="${leadoutPointsToPath(points)}" fill="none"
+    ${haloMarkup}<path d="${shaftPathD}" fill="none"
           stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"
           ${markerAttrs} ${dashArray} ${filterAttr}/>
   `
     : `
-    <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
+    ${haloMarkup}<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
           stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"
           ${markerAttrs} ${dashArray} ${filterAttr}/>
   `;
@@ -657,7 +678,7 @@ function createArrow({ from, to, color = 'red', strokeWidth = 2, style = 'solid'
   return { defs: defs.join('\n'), element };
 }
 
-function createCurvedArrow({ from, to, curve = 50, color = 'red', strokeWidth = 2, headStyle = 'filled', shadow = true, sketch = false, roughness = 1, seed = 1 }) {
+function createCurvedArrow({ from, to, curve = 50, color = 'red', strokeWidth = 2, headStyle = 'filled', halo = false, shadow = true, sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
   const [x1, y1] = from;
   const [x2, y2] = to;
@@ -704,8 +725,12 @@ function createCurvedArrow({ from, to, curve = 50, color = 'red', strokeWidth = 
 
   const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
 
+  const haloMarkup = halo === true
+    ? `<path d="M${x1},${y1} Q${cx},${cy} ${x2},${y2}" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="${strokeWidth + 3}" stroke-linecap="round" stroke-linejoin="round"/>\n    `
+    : '';
+
   const element = `
-    <path d="M${x1},${y1} Q${cx},${cy} ${x2},${y2}"
+    ${haloMarkup}<path d="M${x1},${y1} Q${cx},${cy} ${x2},${y2}"
           fill="none" stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"
           marker-end="url(#${id}-head)" ${filterAttr}/>
   `;
@@ -908,7 +933,67 @@ function createEllipse({ x, y, rx = null, ry = null, width = null, height = null
   return { defs: defs.join('\n'), element };
 }
 
-function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight = '600', background = 'white', padding = 10, cornerRadius = 8, shadow = true, maxWidth = null, handwriting = null, font = null, sketch = false, roughness = 1, seed = 1 }) {
+// Shared implementation for polyline (open) and polygon (closed).
+function createPolyline({ points, closed = false, color = 'red', strokeWidth = 4, fill = 'none', style = 'solid', shadow = false, sketch = false, roughness = 1, seed = 1, fillStyle = 'hachure' }) {
+  const c = getColor(color);
+  const fillColor = !closed || fill === 'none' ? 'none' : getColor(fill);
+
+  if (sketch === true) {
+    const element = closed
+      ? sketchShape('polygon', [points], sketchOptions({
+        stroke: c, strokeWidth, fill: fillColor, fillStyle, roughness, seed, dashed: style === 'dashed'
+      }))
+      : sketchShape('linearPath', [points], sketchOptions({
+        stroke: c, strokeWidth, roughness, seed, dashed: style === 'dashed'
+      }));
+    if (element) return { defs: '', element };
+  }
+
+  const id = generateId(closed ? 'polygon' : 'polyline');
+  const defs = [];
+
+  if (shadow) {
+    defs.push(createDropShadow(`${id}-shadow`));
+  }
+
+  const dashArray = style === 'dashed' ? 'stroke-dasharray="8,4"' : '';
+  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+  const pointsAttr = points.map((point) => `${point[0]},${point[1]}`).join(' ');
+  const tag = closed ? 'polygon' : 'polyline';
+
+  const element = `
+    <${tag} points="${pointsAttr}" fill="${fillColor}" stroke="${c}" stroke-width="${strokeWidth}"
+            stroke-linecap="round" stroke-linejoin="round" ${dashArray} ${filterAttr}/>
+  `;
+
+  return { defs: defs.join('\n'), element };
+}
+
+function createFreehand({ points, closed = false, color = 'red', strokeWidth = 3, sketch = false, roughness = 1, seed = 1 }) {
+  const c = getColor(color);
+
+  if (sketch === true) {
+    // rough.curve interpolates through the points (Catmull-Rom), which is the
+    // natural hand-drawn read of a freehand stroke.
+    const curvePoints = closed && points.length > 2 ? [...points, points[0]] : points;
+    const element = sketchShape('curve', [curvePoints], sketchOptions({
+      stroke: c, strokeWidth, roughness, seed
+    }));
+    if (element) return { defs: '', element };
+  }
+
+  // Clean fallback: a rounded polyline. Spline smoothing is a follow-up.
+  const pointsAttr = points.map((point) => `${point[0]},${point[1]}`).join(' ');
+  const tag = closed ? 'polygon' : 'polyline';
+  const element = `
+    <${tag} points="${pointsAttr}" fill="none" stroke="${c}" stroke-width="${strokeWidth}"
+            stroke-linecap="round" stroke-linejoin="round"/>
+  `;
+
+  return { defs: '', element };
+}
+
+function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight = '600', background = 'white', padding = 10, cornerRadius = 8, shadow = true, maxWidth = null, halo = false, handwriting = null, font = null, sketch = false, roughness = 1, seed = 1 }) {
   const textColor = getColor(color);
   const id = generateId('label');
   const defs = [];
@@ -946,6 +1031,14 @@ function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight
   const textElements = lines.map((line, index) =>
     `<tspan x="${x}" dy="${index === 0 ? 0 : lineHeight}">${escapeXml(line)}</tspan>`
   ).join('');
+  // A background box already isolates the text; halo is for bare labels
+  // sitting straight on the screenshot.
+  if (halo === true && !background) {
+    elements.push(`
+    <text x="${x}" y="${firstBaseline}" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="4" stroke-linejoin="round" font-size="${fontSize}"
+          font-weight="${escapeXml(fontWeight)}" font-family="${fontFamily}">${textElements}</text>
+  `);
+  }
   elements.push(`
     <text x="${x}" y="${firstBaseline}" fill="${textColor}" font-size="${fontSize}"
           font-weight="${escapeXml(fontWeight)}" font-family="${fontFamily}">${textElements}</text>
@@ -1075,7 +1168,7 @@ function createRedact(annotation, { preview = false } = {}) {
   return { defs, element, layer: 'bottom' };
 }
 
-function createConnector({ from, to, color = 'gray', strokeWidth = 2, style = 'dashed', sketch = false, roughness = 1, seed = 1 }) {
+function createConnector({ from, to, color = 'gray', strokeWidth = 2, style = 'dashed', halo = false, sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
   const [x1, y1] = from;
   const [x2, y2] = to;
@@ -1088,15 +1181,37 @@ function createConnector({ from, to, color = 'gray', strokeWidth = 2, style = 'd
   }
 
   const dashArray = style === 'dashed' ? 'stroke-dasharray="8,5"' : '';
+  const haloMarkup = halo === true
+    ? `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="rgba(255,255,255,0.9)" stroke-width="${strokeWidth + 3}" stroke-linecap="round"/>\n`
+    : '';
 
   return {
     defs: '',
-    element: `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" ${dashArray}/>`
+    element: `${haloMarkup}<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" ${dashArray}/>`
   };
 }
 
-function createIcon({ x, y, icon, color = 'green', size = 28, shadow = true, sketch = false, roughness = 1, seed = 1 }) {
+function createIcon({ x, y, icon, color = 'green', size = 28, shadow = true, badge = false, sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
+
+  // Any non-ASCII icon value is treated as literal emoji/glyph text and
+  // rendered directly - the host emoji font supplies the artwork. Emoji carry
+  // their own shape, so the colored badge circle is opt-in via "badge".
+  if (typeof icon === 'string' && /[^\u0000-\u007F]/.test(icon)) {
+    const parts = [];
+    if (badge === true) {
+      const badgeCircle = sketch === true
+        ? sketchShape('circle', [x, y, size * 2], sketchOptions({
+          stroke: adjustColor(c, -40), strokeWidth: 2, fill: c, fillStyle: 'solid', roughness, seed
+        }))
+        : `<circle cx="${x}" cy="${y}" r="${size}" fill="${c}"/>`;
+      if (badgeCircle) parts.push(badgeCircle);
+    }
+    const emojiSize = badge === true ? size * 1.2 : size * 1.6;
+    parts.push(`<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" font-size="${emojiSize}">${escapeXml(icon)}</text>`);
+    return { defs: '', element: `<g>${parts.join('\n')}</g>` };
+  }
+
   const id = generateId('icon');
   const defs = [];
 
@@ -1106,6 +1221,17 @@ function createIcon({ x, y, icon, color = 'green', size = 28, shadow = true, ske
 
   const filterAttr = shadow && sketch !== true ? `filter="url(#${id}-shadow)"` : '';
   let iconPath;
+
+  // Thumb glyph shared by thumbs-up (as-is) and thumbs-down (rotated 180°).
+  const thumbGlyph = () => `
+        <rect x="${x - size * 0.36}" y="${y - size * 0.08}" width="${size * 0.18}" height="${size * 0.38}" rx="2" fill="white"/>
+        <path d="M${x - size * 0.12},${y + size * 0.3} L${x + size * 0.26},${y + size * 0.3}
+                 Q${x + size * 0.38},${y + size * 0.3} ${x + size * 0.35},${y + size * 0.16}
+                 L${x + size * 0.29},${y - size * 0.04} Q${x + size * 0.27},${y - size * 0.13} ${x + size * 0.17},${y - size * 0.13}
+                 L${x + size * 0.02},${y - size * 0.13} L${x + size * 0.09},${y - size * 0.3}
+                 Q${x + size * 0.11},${y - size * 0.42} ${x - size * 0.01},${y - size * 0.38}
+                 L${x - size * 0.12},${y - size * 0.08} Z" fill="white"/>
+  `;
 
   switch (icon) {
     case 'check':
@@ -1144,7 +1270,61 @@ function createIcon({ x, y, icon, color = 'green', size = 28, shadow = true, ske
         <circle cx="${x}" cy="${y + size * 0.2}" r="3" fill="white"/>
       `;
       break;
+    case 'lock':
+      iconPath = `
+        <path d="M${x - size * 0.16},${y - size * 0.02} v-${size * 0.14} a${size * 0.16},${size * 0.16} 0 0 1 ${size * 0.32},0 v${size * 0.14}"
+              fill="none" stroke="white" stroke-width="3.5" stroke-linecap="round"/>
+        <rect x="${x - size * 0.26}" y="${y - size * 0.02}" width="${size * 0.52}" height="${size * 0.38}" rx="3" fill="white"/>
+      `;
+      break;
+    case 'star': {
+      const starPoints = [];
+      for (let k = 0; k < 10; k++) {
+        const r = k % 2 === 0 ? size * 0.42 : size * 0.17;
+        const a = -Math.PI / 2 + (k * Math.PI) / 5;
+        starPoints.push(`${Math.round((x + r * Math.cos(a)) * 100) / 100},${Math.round((y + r * Math.sin(a)) * 100) / 100}`);
+      }
+      iconPath = `<polygon points="${starPoints.join(' ')}" fill="white" stroke-linejoin="round"/>`;
+      break;
+    }
+    case 'cursor':
+    case 'click':
+      iconPath = `
+        <polygon points="${x - size * 0.16},${y - size * 0.32} ${x - size * 0.16},${y + size * 0.26} ${x - size * 0.02},${y + size * 0.12} ${x + size * 0.1},${y + size * 0.34} ${x + size * 0.2},${y + size * 0.28} ${x + size * 0.08},${y + size * 0.07} ${x + size * 0.24},${y + size * 0.04}"
+                 fill="white" stroke-linejoin="round"/>
+      `;
+      break;
+    case 'thumbs-up':
+    case 'thumbsUp':
+      iconPath = thumbGlyph();
+      break;
+    case 'thumbs-down':
+    case 'thumbsDown':
+      iconPath = `<g transform="rotate(180 ${x} ${y})">${thumbGlyph()}</g>`;
+      break;
+    case 'plus':
+    case '+':
+      iconPath = `
+        <line x1="${x - size * 0.25}" y1="${y}" x2="${x + size * 0.25}" y2="${y}" stroke="white" stroke-width="4" stroke-linecap="round"/>
+        <line x1="${x}" y1="${y - size * 0.25}" x2="${x}" y2="${y + size * 0.25}" stroke="white" stroke-width="4" stroke-linecap="round"/>
+      `;
+      break;
+    case 'minus':
+    case '-':
+      iconPath = `
+        <line x1="${x - size * 0.25}" y1="${y}" x2="${x + size * 0.25}" y2="${y}" stroke="white" stroke-width="4" stroke-linecap="round"/>
+      `;
+      break;
+    case 'eye':
+      iconPath = `
+        <path d="M${x - size * 0.36},${y} Q${x},${y - size * 0.34} ${x + size * 0.36},${y} Q${x},${y + size * 0.34} ${x - size * 0.36},${y} Z" fill="white"/>
+        <circle cx="${x}" cy="${y}" r="${size * 0.13}" fill="${c}"/>
+      `;
+      break;
     default:
+      if (icon !== undefined && icon !== null && icon !== '') {
+        log('WARN', `Unknown icon name ${JSON.stringify(String(icon))}; rendering an empty badge. Built-in names: check, x, warning, info, question, lock, star, cursor, thumbs-up, thumbs-down, plus, minus, eye - or pass any emoji character directly.`);
+      }
       iconPath = '';
   }
 
@@ -1403,7 +1583,7 @@ function createLeadout({ target, anchor, text, color = 'red', fontSize = 16, str
   return { defs: defs.join('\n'), element: elements.join('\n') };
 }
 
-function createBracketLabel({ from, to, direction = 'right', text, color = 'red', fontSize = 16, strokeWidth = 2, shadow = true, sketch = false, roughness = 1, seed = 1 }) {
+function createBracketLabel({ from, to, direction = 'right', text, color = 'red', fontSize = 16, strokeWidth = 2, bracketStyle = 'square', shadow = true, sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
   const id = generateId('bracket');
   const defs = [];
@@ -1461,8 +1641,33 @@ function createBracketLabel({ from, to, direction = 'right', text, color = 'red'
       break;
   }
 
+  // Curly variant: hook - spine - centre tip - spine - hook, the classic
+  // typographic brace, generalized over the four directions.
+  const buildCurlyPath = () => {
+    const vertical = direction === 'left' || direction === 'right';
+    const sign = (direction === 'right' || direction === 'bottom') ? 1 : -1;
+    if (vertical) {
+      const spine = x1 + sign * bracketDepth * 0.6;
+      const tip = x1 + sign * (bracketDepth + 6);
+      const hook = Math.sign(y2 - y1 || 1) * Math.min(Math.abs(y2 - y1) / 4, bracketDepth);
+      return `M${x1},${y1} Q${spine},${y1} ${spine},${y1 + hook} L${spine},${midY - hook} Q${spine},${midY} ${tip},${midY} Q${spine},${midY} ${spine},${midY + hook} L${spine},${y2 - hook} Q${spine},${y2} ${x1},${y2}`;
+    }
+    const spine = y1 + sign * bracketDepth * 0.6;
+    const tip = y1 + sign * (bracketDepth + 6);
+    const hook = Math.sign(x2 - x1 || 1) * Math.min(Math.abs(x2 - x1) / 4, bracketDepth);
+    return `M${x1},${y1} Q${x1},${spine} ${x1 + hook},${spine} L${midX - hook},${spine} Q${midX},${spine} ${midX},${tip} Q${midX},${spine} ${midX + hook},${spine} L${x2 - hook},${spine} Q${x2},${spine} ${x2},${y1}`;
+  };
+
   // Bracket path
-  if (sketchOn) {
+  if (bracketStyle === 'curly') {
+    const curlyPath = buildCurlyPath();
+    const sketchCurly = sketchOn
+      ? sketchShape('path', [curlyPath], sketchOptions({ stroke: c, strokeWidth, roughness, seed }))
+      : null;
+    elements.push(sketchCurly || `
+    <path d="${curlyPath}" fill="none" stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" ${filterAttr}/>
+  `);
+  } else if (sketchOn) {
     segments.forEach((pts, i) => {
       elements.push(sketchShape('linearPath', [pts], sketchOptions({ stroke: c, strokeWidth, roughness, seed: seed + i })));
     });
@@ -1764,6 +1969,15 @@ function buildSvgParts(annotations, options = {}) {
       case 'ellipse':
         result = createEllipse(mergedAnn);
         break;
+      case 'polyline':
+        result = createPolyline(mergedAnn);
+        break;
+      case 'polygon':
+        result = createPolyline({ ...mergedAnn, closed: true });
+        break;
+      case 'freehand':
+        result = createFreehand(mergedAnn);
+        break;
       case 'label':
       case 'text':
         result = createLabel(mergedAnn);
@@ -1865,6 +2079,8 @@ const api = {
   createRect,
   createCircle,
   createEllipse,
+  createPolyline,
+  createFreehand,
   createLabel,
   createHighlight,
   createBlur,
