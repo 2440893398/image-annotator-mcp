@@ -4,6 +4,60 @@
 
 ### Added
 
+- **Text auto-wrapping** for `callout`, `label`, and `leadout`: a callout's
+  `width` now doubles as the wrap width, and all three accept `maxWidth`.
+  Wrapping breaks CJK per character and latin at word boundaries, using the
+  same width estimate the renderer draws with (collision boxes stay in sync).
+  Explicit `\n` still forces breaks; without `width`/`maxWidth` nothing
+  changes.
+- **Marker auto-numbering**: markers without `number` count up from 1 in
+  array order; an explicit number sets the cursor for the ones after it
+  (`[auto, auto, 10, auto]` → 1, 2, 10, 11). Also fixes markers rendering
+  the literal "undefined" when `number` was omitted.
+- New **`ellipse`** annotation (center `x`/`y` plus `rx`/`ry`, or
+  `width`/`height` as a box), for circling wide UI regions a circle cannot.
+- **Arrow upgrades**: `heads: "end" | "start" | "both" | "none"` for
+  double-headed/bare arrows, and `lineStyle: "elbow"` reusing the leadout's
+  45° leader routing to steer around content.
+- New **`polyline`**, **`polygon`** (closed, fillable), and **`freehand`**
+  annotations driven by a `points: [[x, y], ...]` array, fully wired through
+  DPR scaling, padding offsets, clamping, remapping, and collision boxes.
+- **Icon set expansion**: `lock`, `star`, `cursor`/`click`, `thumbs-up`,
+  `thumbs-down`, `plus`, `minus`, `eye` join the original five; any **emoji**
+  character passed as `icon` renders directly (badge circle opt-in via
+  `badge: true`). Emoji artwork comes from the host OS emoji font.
+- **`bracketStyle: "curly"`** on `bracket-label` draws a typographic brace in
+  all four directions.
+- **`halo`** white casing extended beyond leadout to `arrow`/`curved-arrow`/
+  `connector` (clean rendering, shaft only), `marker` (outer white ring), and
+  background-less `label`s, for legibility over busy screenshots.
+- **`crop`** top-level option: extract a region before annotating.
+  Coordinates are CSS logical pixels relative to the ORIGINAL image — the
+  pipeline shifts annotation coordinates automatically, so Playwright/DOM
+  coordinates can be reused unchanged.
+- **`background`** top-level option (or a plain color string): CleanShot-style
+  export card — padding (default 48), rounded screenshot corners (default 12),
+  and a drop shadow on a solid or gradient canvas. Stacks with
+  `canvas_padding`; not available with `svg` output.
+- **`auto_layout`** top-level option (opt-in): overlapping leadout chips
+  mirror their anchor around the target and overlapping callouts flip their
+  pointer to the first free position; every move is reported as a warning.
+  Without the flag, detected overlaps now emit a hint that the option exists.
+- **`measure` auto-distance**: omit `text` to display the measured
+  point-to-point distance in logical pixels (DPR-corrected).
+- `create_step_guide` accepts the `sketch` theme/flag and warns when a guide
+  exceeds the 5–7 step best-practice range; the CLI gains `--sketch`,
+  `--crop`, `--background`, and `--auto-layout`.
+- The MCP schema now declares previously hidden renderer fields (`headStyle`,
+  `fill`, `fillStyle`, `padding`, `fontWeight`, `borderColor`) so agents can
+  discover them.
+
+### Fixed
+
+- Multi-line `label` text used to run downward out of its background box;
+  the text block is now bottom-anchored on the `y` baseline so every line
+  stays inside (single-line output unchanged).
+
 - Hand-drawn **sketch style** (Excalidraw-like) for every annotation type,
   powered by a vendored copy of rough.js (MIT, `src/vendor/rough.js` — the
   same shape engine Excalidraw uses), with Excalidraw's renderer defaults

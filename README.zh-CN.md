@@ -76,20 +76,30 @@ npm install
 支持位图输出（`png`、`jpeg`、`webp`、`avif`）以及标注层 `svg` 输出。还支持 `redact_patterns`，用正则匹配标注文本并以实心矩形遮盖——**遮的是标注自身的文本框（含安全余量），不是截图底图中的原始内容**；不做 OCR；`svg` 输出下不可用。
 
 **标注类型：**
-- `marker` - 带渐变和阴影的数字圆形标记（1, 2, 3...）
-- `arrow` - 可自定义箭头的直线箭头
+- `marker` - 带渐变和阴影的数字圆形标记；省略 `number` 时按数组顺序自动从 1 递增
+- `arrow` - 直线或折线箭头（`lineStyle`），可在任一端或两端画箭头（`heads`）
 - `curved-arrow` - 平滑曲线箭头
-- `callout` - 带指针的文字框（气泡标注）
+- `callout` - 带指针的文字框（气泡标注）；设置 `width`/`maxWidth` 后自动换行
 - `rect` - 矩形高亮
 - `circle` - 圆形高亮
-- `label` - 带可选背景的文字标签
+- `ellipse` - 椭圆圈选（中心点 + `rx`/`ry`），适合圈宽扁的 UI 区域
+- `polyline` / `polygon` - 开放/闭合的多点折线与多边形（`points: [[x,y],...]`）
+- `freehand` - 经过点列的自由画笔
+- `label` - 带可选背景的文字标签（`maxWidth` 自动换行）
 - `highlight` - 半透明覆盖层
 - `redact` - 遮盖区域（详见下方"打码"）
 - `blur` - 已弃用，等价于 `redact` 的 `mode: "blur"`（可逆的视觉弱化，不是隐私保护）
 - `connector` - 元素间的虚线连接
-- `icon` - 图标徽章（check、x、warning、info、question）
+- `icon` - 图标徽章（check、x、warning、info、question、lock、star、cursor、thumbs-up、thumbs-down、plus、minus、eye），或直接传任意 emoji 字符
+- `measure` - 带刻度线的尺寸标注；省略 `text` 自动显示两点距离
+- `leadout` - 折线引出标注（目标圆点 + 标签芯片）
+- `bracket-label` - 方括号或花括号（`bracketStyle`）分组标注
+- `spotlight` - 暗色遮罩挖洞聚焦
+- `magnifier` - 目标区域的圆形放大镜
 
-**主题：** `documentation`、`tutorial`、`bugReport`、`highlight`
+**顶层选项：** `crop`（按原图坐标裁剪后再标注）、`background`（CleanShot 风格出图卡片：留白 + 圆角 + 投影 + 纯色/渐变背景）、`auto_layout`（可选的 leadout/callout 标签避让）、`canvas_padding`、`device_pixel_ratio`、`sketch`、`redact_patterns`。
+
+**主题：** `documentation`、`tutorial`、`bugReport`、`highlight`、`sketch`
 
 **颜色：** red, orange, yellow, green, blue, purple, pink, cyan, teal, white, black, gray, lightGray, darkGray, success, warning, error, info, primary, secondary, accent
 

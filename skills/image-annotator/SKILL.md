@@ -14,7 +14,7 @@ Use this skill when you need to add professional visual markers, arrows, callout
 - Adding explanatory callouts to complex diagrams
 
 ## Supported workflows
-1. **Annotate a screenshot**: Add markers, arrows, callouts, rectangles, circles, labels, highlights, redactions, connectors, and icons.
+1. **Annotate a screenshot**: Add markers (auto-numbered), arrows (double-headed/elbow), callouts and labels (auto-wrapping via `width`/`maxWidth`), rectangles, circles, ellipses, polylines/polygons, freehand strokes, highlights, redactions, connectors, icons (built-ins or any emoji), measurements (auto distance), leadouts, brackets (square/curly), spotlights, and magnifiers. Top-level extras: `crop` a region first, `background` for a CleanShot-style export card, `auto_layout` to resolve label overlaps.
 2. **Get image dimensions**: Retrieve width, height, and format to calculate precise annotation coordinates.
 3. **Create step-by-step guides**: Automatically generate numbered markers with labels and connecting arrows.
 4. **Reannotate resized screenshots**: Proportionally remap existing annotations to a new image size.

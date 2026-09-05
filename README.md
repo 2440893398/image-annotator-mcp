@@ -83,20 +83,30 @@ Add multiple annotations to a screenshot image.
 Supports raster output (`png`, `jpeg`, `webp`, `avif`) plus annotation-layer `svg` output. Also supports `redact_patterns` for regex-based redaction of annotation text (covers the matched annotation's own text box with a solid rectangle — not the underlying screenshot content; no OCR; not available with `svg` output).
 
 **Annotation Types:**
-- `marker` - Numbered circles (1, 2, 3...) with gradient and shadow
-- `arrow` - Straight arrows with customizable heads
+- `marker` - Numbered circles with gradient and shadow; `number` may be omitted and auto-increments in array order
+- `arrow` - Straight or elbow arrows (`lineStyle`), heads on either or both ends (`heads`)
 - `curved-arrow` - Smooth curved arrows
-- `callout` - Text boxes with pointers (speech bubbles)
+- `callout` - Text boxes with pointers (speech bubbles); text wraps automatically when `width`/`maxWidth` is set
 - `rect` - Rectangle highlights
 - `circle` - Circle highlights
-- `label` - Text labels with optional backgrounds
+- `ellipse` - Ellipse outline (`rx`/`ry` around a center) for wide or flat UI regions
+- `polyline` / `polygon` - Open or closed multi-point shapes (`points: [[x,y],...]`)
+- `freehand` - Freehand stroke through a points array
+- `label` - Text labels with optional backgrounds (`maxWidth` wraps)
 - `highlight` - Semi-transparent overlays
 - `redact` - Cover a region (see [Redaction](#redaction) below)
 - `blur` - Deprecated alias for `redact` with `mode: "blur"` (reversible de-emphasis, not privacy protection)
 - `connector` - Dashed lines between elements
-- `icon` - Icon badges (check, x, warning, info, question)
+- `icon` - Icon badges (check, x, warning, info, question, lock, star, cursor, thumbs-up, thumbs-down, plus, minus, eye) or any emoji character
+- `measure` - Dimension lines with tick marks; omit `text` to auto-show the measured distance
+- `leadout` - Leader-line callout with elbow routing and a label chip
+- `bracket-label` - Square or curly bracket (`bracketStyle`) grouping an area with a label
+- `spotlight` - Dark overlay with a cutout to focus attention
+- `magnifier` - Circular zoomed-in patch of the target area
 
-**Themes:** `documentation`, `tutorial`, `bugReport`, `highlight`
+**Top-level options:** `crop` (annotate a region using original-image coordinates), `background` (CleanShot-style export card: padding + rounded corners + shadow on a color/gradient canvas), `auto_layout` (opt-in overlap avoidance for leadout/callout labels), `canvas_padding`, `device_pixel_ratio`, `sketch`, `redact_patterns`.
+
+**Themes:** `documentation`, `tutorial`, `bugReport`, `highlight`, `sketch`
 
 **Colors:** red, orange, yellow, green, blue, purple, pink, cyan, teal, white, black, gray, lightGray, darkGray, success, warning, error, info, primary, secondary, accent
 
