@@ -67,6 +67,7 @@ describe('server.js', () => {
       [{ type: 'marker', x: 10, y: 10, number: 1 }],
       {
         theme: 'documentation',
+        sketch: false,
         outputFormat: 'webp',
         quality: 75,
         devicePixelRatio: 2,

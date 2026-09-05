@@ -116,6 +116,7 @@ const runtimeFiles = [
   'src/config-ui/launch.js',
   'src/config-ui/server.js',
   'src/preview/renderer.js',
+  'src/vendor/rough.js',
   'src/config-loader.js',
   'src/annotate-errors.js',
 ];
@@ -257,6 +258,7 @@ const requiredPackedFiles = [
   'src/config-ui/launch.js',
   'src/config-ui/server.js',
   'src/preview/renderer.js',
+  'src/vendor/rough.js',
   'src/config-loader.js',
   'src/annotate-errors.js',
   'skills/image-annotator/SKILL.md',

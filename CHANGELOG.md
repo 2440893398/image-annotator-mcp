@@ -1,5 +1,55 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Hand-drawn **sketch style** (Excalidraw-like) for every annotation type,
+  powered by a vendored copy of rough.js (MIT, `src/vendor/rough.js` — the
+  same shape engine Excalidraw uses), with Excalidraw's renderer defaults
+  (roughness 1, hachure fill weight/gap derived from stroke width):
+  - Turn on globally with the `sketch: true` option (MCP: top-level `sketch`)
+    or the new `sketch` theme; per annotation via `sketch`, tunable with
+    `roughness` and `seed`. Seeds default to the annotation index so
+    re-renders are byte-identical.
+  - Text in sketch mode falls back to the handwriting font stack, which now
+    includes KaiTi/Kaiti SC so CJK text gets a brush-style face on
+    Windows/macOS (Linux: install a handwriting font such as LXGW WenKai).
+  - Arrow heads are inlined as two wobbly strokes (SVG `<marker>` cannot
+    wobble); the spotlight's mask cutout and visible ring share one rough
+    outline; the magnifier's lens ring intentionally stays a clean circle to
+    match Sharp's circular pixel crop.
+  - **`redact`/`blur` never sketch**: a wobbly edge would leak border pixels
+    of the covered content, so redaction rectangles stay pixel-aligned and
+    crisp under any sketch flag.
+  - `font` and `handwriting` are now exposed in the MCP annotation schema.
+  - Browser previews (examples gallery, config UI) load `vendor/rough.js`
+    via a script tag; if it is missing, sketch requests degrade to clean
+    rendering with a warning instead of failing.
+
+### Changed
+
+- `leadout` visual redesign, following leader-line conventions from technical
+  illustration and boundary-labeling research (see
+  `docs/superpowers/specs/2026-09-05-leadout-visual-redesign.md`):
+  - Leader is now a 45°-then-axis-aligned **elbow** that meets the label edge
+    head-on at its centre, instead of a straight line entering at a random
+    angle (`lineStyle: "straight"` restores the old routing).
+  - A white **halo casing** under the line and target dot keeps them legible
+    over busy screenshot content (`halo: false` to disable).
+  - The target dot gained a white ring; unless set, the leader stroke scales
+    with the label font size (`max(2, 0.15em)`), and `leadout` now follows
+    the image-size font presets like `label`/`callout` do.
+  - The label is a **soft chip** by default: a light tint of the accent color
+    with an accent border and dark text (calm and readable, Excalidraw-palette
+    style), plus a soft drop shadow. `variant: "filled"` gives a solid accent
+    chip with luminance-picked text for maximum emphasis; `variant: "outline"`
+    a white chip with accent border.
+  - `leadout` accepts `font`/`handwriting`, supports multi-line `text`, and
+    picks up per-theme colors/fonts from all four built-in themes.
+  - `estimateAnnotationBounds` sizes leadout labels from the real text metrics
+    instead of a hard-coded 100px width.
+
 ## 1.1.0 (2026-09-05)
 
 ### ⚠️ Security notice: the old `blur` type never redacted anything

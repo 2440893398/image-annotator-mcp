@@ -45,7 +45,10 @@ const THEME_FONTS = {
   highlight: 'Noto Sans, Noto Sans CJK SC, sans-serif'
 };
 
-const HANDWRITING_FONT = 'Comic Sans MS, Chalkboard SE, Patrick Hand, cursive';
+// KaiTi/Kaiti SC give CJK text a brush-style fallback (Windows/macOS ship
+// them); latin priority is unchanged. Linux hosts need a handwriting font
+// installed — LXGW WenKai (OFL) is a good free choice for Chinese.
+const HANDWRITING_FONT = 'Comic Sans MS, Chalkboard SE, Patrick Hand, Segoe Print, KaiTi, Kaiti SC, LXGW WenKai, cursive';
 const CLEAN_FONT = 'Segoe UI, Helvetica Neue, Arial, sans-serif';
 
 const COLORS = {
@@ -77,25 +80,39 @@ const THEMES = {
     marker: { color: 'primary', size: 32 },
     arrow: { color: 'primary', strokeWidth: 5 },
     label: { color: 'primary', fontSize: 20, background: 'white', font: 'Inter' },
-    callout: { color: 'primary', background: 'white', font: 'Inter' }
+    callout: { color: 'primary', background: 'white', font: 'Inter' },
+    leadout: { color: 'primary', font: 'Inter' }
   },
   tutorial: {
     marker: { color: 'green', size: 36 },
     arrow: { color: 'green', strokeWidth: 6 },
     label: { color: 'darkGray', fontSize: 22, background: 'lightGray', font: 'Nunito' },
-    callout: { color: 'green', background: 'white', font: 'Nunito' }
+    callout: { color: 'green', background: 'white', font: 'Nunito' },
+    leadout: { color: 'green', font: 'Nunito' }
   },
   bugReport: {
     marker: { color: 'error', size: 32 },
     arrow: { color: 'error', strokeWidth: 5 },
     label: { color: 'error', fontSize: 20, background: 'white', font: 'JetBrains Mono' },
-    callout: { color: 'error', background: 'white', font: 'JetBrains Mono' }
+    callout: { color: 'error', background: 'white', font: 'JetBrains Mono' },
+    leadout: { color: 'error', font: 'JetBrains Mono' }
   },
   highlight: {
     marker: { color: 'warning', size: 32 },
     arrow: { color: 'warning', strokeWidth: 5 },
     label: { color: 'darkGray', fontSize: 20, background: 'yellow', font: 'Noto Sans' },
-    callout: { color: 'warning', background: 'yellow', font: 'Noto Sans' }
+    callout: { color: 'warning', background: 'yellow', font: 'Noto Sans' },
+    leadout: { color: 'warning', font: 'Noto Sans' }
+  },
+  // Excalidraw-flavoured: buildSvgParts turns the sketch renderer on for every
+  // annotation when this theme is active; the entries here only pick the
+  // near-black ink Excalidraw uses by default.
+  sketch: {
+    marker: { color: 'black' },
+    arrow: { color: 'black', strokeWidth: 2 },
+    label: { color: 'black', background: 'white' },
+    callout: { color: 'black', background: 'white' },
+    leadout: { color: 'black' }
   }
 };
 
@@ -234,6 +251,91 @@ function getFontFamily(font, handwriting) {
   return CLEAN_FONT;
 }
 
+// In sketch mode text defaults to the handwriting font unless the caller
+// asked for something else explicitly.
+function getSketchAwareFontFamily(font, handwriting, sketch) {
+  return getFontFamily(font, handwriting === null || handwriting === undefined ? sketch === true : handwriting);
+}
+
+// --- sketch (hand-drawn) rendering -----------------------------------------
+// Powered by vendored rough.js (src/vendor/rough.js, MIT) — the same shape
+// engine Excalidraw uses. Loaded lazily and per-host like render.js itself:
+// require() under Node, the `rough` global under a plain <script>. When the
+// library is missing (e.g. a page forgot the script tag) sketch requests
+// degrade to the clean renderer with a single warning instead of failing.
+let cachedRoughGenerator = null;
+let warnedMissingRough = false;
+
+function getRoughGenerator() {
+  if (cachedRoughGenerator) return cachedRoughGenerator;
+  let lib = null;
+  if (isCommonJs && typeof require === 'function') {
+    try { lib = require('../vendor/rough'); } catch (_e) { lib = null; }
+  } else if (typeof globalThis !== 'undefined') {
+    lib = globalThis.rough;
+  }
+  if (lib && typeof lib.generator === 'function') {
+    cachedRoughGenerator = lib.generator();
+    return cachedRoughGenerator;
+  }
+  if (!warnedMissingRough) {
+    warnedMissingRough = true;
+    log('WARN', 'sketch style requested but rough.js is not available; falling back to clean rendering.');
+  }
+  return null;
+}
+
+// Excalidraw's renderer settings: roughness 1 ("artist"), bowing 1, per-element
+// seed, hachure weight/gap derived from the stroke width. rough.js treats a
+// falsy seed as "randomize", so seeds are clamped to >= 1 to keep renders
+// deterministic (same annotations in, same pixels out).
+function sketchOptions({ stroke, strokeWidth = 2, fill = null, fillStyle = 'hachure', roughness = 1, seed = 1, dashed = false }) {
+  const opts = {
+    roughness,
+    bowing: 1,
+    stroke,
+    strokeWidth,
+    seed: Math.max(1, Math.round(seed) || 1),
+    disableMultiStroke: dashed === true
+  };
+  if (dashed) opts.strokeLineDash = [8, 8];
+  if (fill && fill !== 'none') {
+    opts.fill = fill;
+    opts.fillStyle = fillStyle;
+    opts.fillWeight = strokeWidth / 2;
+    opts.hachureGap = strokeWidth * 4;
+  }
+  return opts;
+}
+
+// rough's toPaths() drops strokeLineDash (its own SVG adapter applies it as an
+// attribute), so the dash pattern is re-applied here to stroke paths.
+function roughPathsToSvg(paths, strokeLineDash = null) {
+  return paths.map((p) => {
+    const fill = p.fill && p.fill !== 'none' ? p.fill : 'none';
+    const dashAttr = strokeLineDash && fill === 'none'
+      ? ` stroke-dasharray="${strokeLineDash.join(',')}"`
+      : '';
+    return `<path d="${p.d}" fill="${fill}" stroke="${p.stroke || 'none'}" stroke-width="${p.strokeWidth || 0}" stroke-linecap="round" stroke-linejoin="round"${dashAttr}/>`;
+  }).join('\n');
+}
+
+/**
+ * Draw one rough.js primitive as SVG markup, or return null when the library
+ * is unavailable (callers then fall through to their clean branch).
+ *
+ * @param {string} kind - generator method: 'line', 'rectangle', 'circle',
+ *   'ellipse', 'linearPath', 'polygon', 'curve', 'path'
+ * @param {Array} args - positional arguments for that method
+ * @param {object} opts - result of sketchOptions()
+ */
+function sketchShape(kind, args, opts) {
+  const gen = getRoughGenerator();
+  if (!gen || typeof gen[kind] !== 'function') return null;
+  return roughPathsToSvg(gen.toPaths(gen[kind](...args, opts)), opts.strokeLineDash || null);
+}
+// ---------------------------------------------------------------------------
+
 let customIdGenerator = null;
 
 function generateId(prefix = 'ann') {
@@ -252,16 +354,41 @@ function resetIdGenerator() {
   customIdGenerator = null;
 }
 
-function createDropShadow(id, blur = 4, opacity = 0.3) {
+function createDropShadow(id, blur = 4, opacity = 0.3, dx = 2, dy = 2) {
   return `
     <filter id="${id}" x="-50%" y="-50%" width="200%" height="200%">
-      <feDropShadow dx="2" dy="2" stdDeviation="${blur}" flood-opacity="${opacity}"/>
+      <feDropShadow dx="${dx}" dy="${dy}" stdDeviation="${blur}" flood-opacity="${opacity}"/>
     </filter>
   `;
 }
 
-function createMarker({ x, y, number, color = 'red', size = 32, shadow = true, style = 'filled' }) {
+function createMarker({ x, y, number, color = 'red', size = 32, shadow = true, style = 'filled', sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
+
+  if (sketch === true) {
+    const isBadge = style === 'badge';
+    const badgeWidth = number > 9 ? size * 2.4 : size * 2;
+    const solid = style !== 'outline';
+    // Solid markers trade the gradient for a flat fill with a darker outline.
+    const opts = sketchOptions({
+      stroke: solid ? adjustColor(c, -40) : c,
+      strokeWidth: 2.5,
+      fill: solid ? c : '#FFFFFF',
+      fillStyle: 'solid',
+      roughness,
+      seed
+    });
+    const shape = isBadge
+      ? sketchShape('rectangle', [x - badgeWidth / 2, y - size, badgeWidth, size * 2], opts)
+      : sketchShape('circle', [x, y, size * 2], opts);
+    if (shape) {
+      const textColor = solid ? getRedactLabelColor(c) : c;
+      const numeral = `<text x="${x}" y="${y + size * 0.35}" text-anchor="middle" fill="${textColor}"
+            font-size="${size * 0.9}" font-weight="bold" font-family="${HANDWRITING_FONT}">${escapeXml(number)}</text>`;
+      return { defs: '', element: shape + '\n' + numeral };
+    }
+  }
+
   const id = generateId('marker');
   const defs = [];
   const elements = [];
@@ -308,10 +435,30 @@ function createMarker({ x, y, number, color = 'red', size = 32, shadow = true, s
   return { defs: defs.join('\n'), element: elements.join('\n') };
 }
 
-function createArrow({ from, to, color = 'red', strokeWidth = 2, style = 'solid', headStyle = 'filled', shadow = true }) {
+// Two short strokes fanning back from the tip — how rough.js-based tools
+// (Excalidraw included) draw arrowheads, since <marker> refs cannot wobble.
+function sketchArrowHead(x2, y2, angle, headSize, opts) {
+  const wing = 0.45;
+  const head1 = sketchShape('line', [x2, y2, x2 - headSize * Math.cos(angle - wing), y2 - headSize * Math.sin(angle - wing)], opts);
+  const head2 = sketchShape('line', [x2, y2, x2 - headSize * Math.cos(angle + wing), y2 - headSize * Math.sin(angle + wing)], opts);
+  return head1 && head2 ? head1 + '\n' + head2 : null;
+}
+
+function createArrow({ from, to, color = 'red', strokeWidth = 2, style = 'solid', headStyle = 'filled', shadow = true, sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
   const [x1, y1] = from;
   const [x2, y2] = to;
+
+  if (sketch === true) {
+    const shaft = sketchShape('line', [x1, y1, x2, y2], sketchOptions({
+      stroke: c, strokeWidth, roughness, seed, dashed: style === 'dashed'
+    }));
+    const headSize = Math.max(12, strokeWidth * 4);
+    const head = shaft && sketchArrowHead(x2, y2, Math.atan2(y2 - y1, x2 - x1), headSize,
+      sketchOptions({ stroke: c, strokeWidth, roughness, seed: seed + 1 }));
+    if (shaft && head) return { defs: '', element: shaft + '\n' + head };
+  }
+
   const id = generateId('arrow');
   const defs = [];
 
@@ -349,12 +496,10 @@ function createArrow({ from, to, color = 'red', strokeWidth = 2, style = 'solid'
   return { defs: defs.join('\n'), element };
 }
 
-function createCurvedArrow({ from, to, curve = 50, color = 'red', strokeWidth = 2, headStyle = 'filled', shadow = true }) {
+function createCurvedArrow({ from, to, curve = 50, color = 'red', strokeWidth = 2, headStyle = 'filled', shadow = true, sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
   const [x1, y1] = from;
   const [x2, y2] = to;
-  const id = generateId('curved-arrow');
-  const defs = [];
 
   const midX = (x1 + x2) / 2;
   const midY = (y1 + y2) / 2;
@@ -365,6 +510,24 @@ function createCurvedArrow({ from, to, curve = 50, color = 'red', strokeWidth = 
   const ny = dx / len;
   const cx = midX + nx * curve;
   const cy = midY + ny * curve;
+
+  if (sketch === true) {
+    // rough.curve wants sample points, so flatten the quadratic first.
+    const pts = [];
+    for (let i = 0; i <= 16; i++) {
+      const t = i / 16;
+      const mt = 1 - t;
+      pts.push([mt * mt * x1 + 2 * mt * t * cx + t * t * x2, mt * mt * y1 + 2 * mt * t * cy + t * t * y2]);
+    }
+    const shaft = sketchShape('curve', [pts], sketchOptions({ stroke: c, strokeWidth, roughness, seed }));
+    const [px, py] = pts[pts.length - 2];
+    const head = shaft && sketchArrowHead(x2, y2, Math.atan2(y2 - py, x2 - px), Math.max(12, strokeWidth * 4),
+      sketchOptions({ stroke: c, strokeWidth, roughness, seed: seed + 1 }));
+    if (shaft && head) return { defs: '', element: shaft + '\n' + head };
+  }
+
+  const id = generateId('curved-arrow');
+  const defs = [];
 
   if (shadow) {
     defs.push(createDropShadow(`${id}-shadow`, 2, 0.2));
@@ -389,12 +552,13 @@ function createCurvedArrow({ from, to, curve = 50, color = 'red', strokeWidth = 
   return { defs: defs.join('\n'), element };
 }
 
-function createCallout({ x, y, text, color = 'primary', background = 'white', width = null, pointer = 'bottom', fontSize = 18, shadow = true, handwriting = null, font = null }) {
+function createCallout({ x, y, text, color = 'primary', background = 'white', width = null, pointer = 'bottom', fontSize = 18, shadow = true, handwriting = null, font = null, sketch = false, roughness = 1, seed = 1 }) {
   const borderColor = getColor(color);
   const bgColor = getColor(background);
   const id = generateId('callout');
   const defs = [];
-  const fontFamily = getFontFamily(font, handwriting);
+  const sketchOn = sketch === true && getRoughGenerator() !== null;
+  const fontFamily = getSketchAwareFontFamily(font, handwriting, sketchOn);
 
   const padding = 14;
   const lineHeight = fontSize * 1.5;
@@ -403,66 +567,105 @@ function createCallout({ x, y, text, color = 'primary', background = 'white', wi
   const textWidth = width || contentWidth + padding * 2;
   const textHeight = lines.length * lineHeight + padding * 2;
 
-  if (shadow) {
+  if (shadow && !sketchOn) {
     defs.push(createDropShadow(`${id}-shadow`, 4, 0.15));
   }
 
-  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+  const filterAttr = shadow && !sketchOn ? `filter="url(#${id}-shadow)"` : '';
   let boxX;
   let boxY;
-  let pointerPath;
+  // Pointer triangle as points: base corner, tip, base corner, plus the unit
+  // vector that leads from the base back into the bubble.
+  let pointerPts = null;
+  let inward = null;
   const pointerSize = 12;
 
   switch (pointer) {
     case 'top':
       boxX = x - textWidth / 2;
       boxY = y + pointerSize;
-      pointerPath = `M${x - pointerSize},${y + pointerSize} L${x},${y} L${x + pointerSize},${y + pointerSize}`;
+      pointerPts = [[x - pointerSize, y + pointerSize], [x, y], [x + pointerSize, y + pointerSize]];
+      inward = [0, 1];
       break;
     case 'bottom':
       boxX = x - textWidth / 2;
       boxY = y - textHeight - pointerSize;
-      pointerPath = `M${x - pointerSize},${y - pointerSize} L${x},${y} L${x + pointerSize},${y - pointerSize}`;
+      pointerPts = [[x - pointerSize, y - pointerSize], [x, y], [x + pointerSize, y - pointerSize]];
+      inward = [0, -1];
       break;
     case 'left':
       boxX = x + pointerSize;
       boxY = y - textHeight / 2;
-      pointerPath = `M${x + pointerSize},${y - pointerSize} L${x},${y} L${x + pointerSize},${y + pointerSize}`;
+      pointerPts = [[x + pointerSize, y - pointerSize], [x, y], [x + pointerSize, y + pointerSize]];
+      inward = [1, 0];
       break;
     case 'right':
       boxX = x - textWidth - pointerSize;
       boxY = y - textHeight / 2;
-      pointerPath = `M${x - pointerSize},${y - pointerSize} L${x},${y} L${x - pointerSize},${y + pointerSize}`;
+      pointerPts = [[x - pointerSize, y - pointerSize], [x, y], [x - pointerSize, y + pointerSize]];
+      inward = [-1, 0];
       break;
     default:
       boxX = x;
       boxY = y;
-      pointerPath = '';
   }
+
+  const pointerPath = pointerPts
+    ? `M${pointerPts[0][0]},${pointerPts[0][1]} L${pointerPts[1][0]},${pointerPts[1][1]} L${pointerPts[2][0]},${pointerPts[2][1]}`
+    : '';
 
   const textY = boxY + padding + lineHeight / 2;
   const textElements = lines.map((line, index) =>
     `<tspan x="${boxX + padding}" dy="${index === 0 ? 0 : lineHeight}">${escapeXml(line)}</tspan>`
   ).join('');
+  const textMarkup = `<text x="${boxX + padding}" y="${textY}" dominant-baseline="middle"
+            fill="${getColor('darkGray')}" font-size="${fontSize}" font-family="${fontFamily}" font-weight="600">
+        ${textElements}
+      </text>`;
+
+  if (sketchOn) {
+    const bubble = sketchShape('rectangle', [boxX, boxY, textWidth, textHeight], sketchOptions({
+      stroke: borderColor, strokeWidth: 2.5, fill: bgColor, fillStyle: 'solid', roughness, seed
+    }));
+    let pointerMarkup = '';
+    if (pointerPts) {
+      // A clean background-coloured wedge, extended a few pixels into the
+      // bubble, hides the wobbly border segment under the pointer before the
+      // two sketchy pointer edges are drawn on top.
+      const [b1, tip, b2] = pointerPts;
+      const inset = 6;
+      const mask = `M${b1[0] + inward[0] * inset},${b1[1] + inward[1] * inset} L${b1[0]},${b1[1]} L${tip[0]},${tip[1]} L${b2[0]},${b2[1]} L${b2[0] + inward[0] * inset},${b2[1] + inward[1] * inset} Z`;
+      pointerMarkup += `<path d="${mask}" fill="${bgColor}"/>`;
+      pointerMarkup += sketchShape('linearPath', [pointerPts], sketchOptions({
+        stroke: borderColor, strokeWidth: 2.5, roughness, seed: seed + 1
+      })) || '';
+    }
+    return { defs: '', element: `<g>${bubble}\n${pointerMarkup}\n${textMarkup}</g>` };
+  }
 
   const element = `
     <g ${filterAttr}>
       <rect x="${boxX}" y="${boxY}" width="${textWidth}" height="${textHeight}"
             rx="10" fill="${bgColor}" stroke="${borderColor}" stroke-width="3" stroke-linejoin="round"/>
       ${pointerPath ? `<path d="${pointerPath}" fill="${bgColor}" stroke="${borderColor}" stroke-width="3" stroke-linejoin="round"/>` : ''}
-      <text x="${boxX + padding}" y="${textY}" dominant-baseline="middle"
-            fill="${getColor('darkGray')}" font-size="${fontSize}" font-family="${fontFamily}" font-weight="600">
-        ${textElements}
-      </text>
+      ${textMarkup}
     </g>
   `;
 
   return { defs: defs.join('\n'), element };
 }
 
-function createRect({ x, y, width, height, color = 'red', strokeWidth = 4, fill = 'none', cornerRadius = 12, style = 'solid', shadow = false }) {
+function createRect({ x, y, width, height, color = 'red', strokeWidth = 4, fill = 'none', cornerRadius = 12, style = 'solid', shadow = false, sketch = false, roughness = 1, seed = 1, fillStyle = 'hachure' }) {
   const c = getColor(color);
   const fillColor = fill === 'none' ? 'none' : getColor(fill);
+
+  if (sketch === true) {
+    const element = sketchShape('rectangle', [x, y, width, height], sketchOptions({
+      stroke: c, strokeWidth, fill: fillColor, fillStyle, roughness, seed, dashed: style === 'dashed'
+    }));
+    if (element) return { defs: '', element };
+  }
+
   const id = generateId('rect');
   const defs = [];
 
@@ -481,9 +684,17 @@ function createRect({ x, y, width, height, color = 'red', strokeWidth = 4, fill 
   return { defs: defs.join('\n'), element };
 }
 
-function createCircle({ x, y, radius = 30, color = 'red', strokeWidth = 4, fill = 'none', style = 'solid', shadow = false }) {
+function createCircle({ x, y, radius = 30, color = 'red', strokeWidth = 4, fill = 'none', style = 'solid', shadow = false, sketch = false, roughness = 1, seed = 1, fillStyle = 'hachure' }) {
   const c = getColor(color);
   const fillColor = fill === 'none' ? 'none' : getColor(fill);
+
+  if (sketch === true) {
+    const element = sketchShape('circle', [x, y, radius * 2], sketchOptions({
+      stroke: c, strokeWidth, fill: fillColor, fillStyle, roughness, seed, dashed: style === 'dashed'
+    }));
+    if (element) return { defs: '', element };
+  }
+
   const id = generateId('circle');
   const defs = [];
 
@@ -502,27 +713,33 @@ function createCircle({ x, y, radius = 30, color = 'red', strokeWidth = 4, fill 
   return { defs: defs.join('\n'), element };
 }
 
-function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight = '600', background = 'white', padding = 10, cornerRadius = 8, shadow = true, handwriting = null, font = null }) {
+function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight = '600', background = 'white', padding = 10, cornerRadius = 8, shadow = true, handwriting = null, font = null, sketch = false, roughness = 1, seed = 1 }) {
   const textColor = getColor(color);
   const id = generateId('label');
   const defs = [];
   const elements = [];
-  const fontFamily = getFontFamily(font, handwriting);
+  const fontFamily = getSketchAwareFontFamily(font, handwriting, sketch);
 
   const lines = text.split('\n');
   const lineHeight = fontSize * 1.3;
   const textWidth = Math.max(0, ...lines.map((line) => getTextContentWidthPx(line, fontSize)));
   const textHeight = lines.length * lineHeight;
 
-  if (shadow && background) {
+  // Sketch mode drops the drop shadow — Excalidraw-style output is flat.
+  if (shadow && background && sketch !== true) {
     defs.push(createDropShadow(`${id}-shadow`, 4, 0.2));
   }
 
-  const filterAttr = shadow && background ? `filter="url(#${id}-shadow)"` : '';
+  const filterAttr = shadow && background && sketch !== true ? `filter="url(#${id}-shadow)"` : '';
 
   if (background) {
     const bgColor = getColor(background);
-    elements.push(`
+    const sketchRect = sketch === true
+      ? sketchShape('rectangle', [x - padding, y - textHeight - padding + 4, textWidth + padding * 2, textHeight + padding * 2], sketchOptions({
+        stroke: textColor, strokeWidth: 2, fill: bgColor, fillStyle: 'solid', roughness, seed
+      }))
+      : null;
+    elements.push(sketchRect || `
       <rect x="${x - padding}" y="${y - textHeight - padding + 4}"
             width="${textWidth + padding * 2}" height="${textHeight + padding * 2}"
             rx="${cornerRadius}" fill="${bgColor}" stroke="${textColor}" stroke-width="2" stroke-linejoin="round" ${filterAttr}/>
@@ -540,8 +757,18 @@ function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight
   return { defs: defs.join('\n'), element: elements.join('\n') };
 }
 
-function createHighlight({ x, y, width, height, color = 'yellow', opacity = 0.35, cornerRadius = 0 }) {
+function createHighlight({ x, y, width, height, color = 'yellow', opacity = 0.35, cornerRadius = 0, sketch = false, roughness = 1, seed = 1, fillStyle = 'hachure', strokeWidth = 2 }) {
   const c = getColor(color);
+
+  if (sketch === true) {
+    // Hachure fill is the sketchy read of "marker over this area"; opacity is
+    // applied on the wrapper so fill and outline fade together.
+    const shape = sketchShape('rectangle', [x, y, width, height], sketchOptions({
+      stroke: c, strokeWidth, fill: c, fillStyle, roughness, seed
+    }));
+    if (shape) return { defs: '', element: `<g opacity="${opacity}">${shape}</g>` };
+  }
+
   return {
     defs: '',
     element: `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${cornerRadius}" fill="${c}" opacity="${opacity}"/>`
@@ -596,6 +823,10 @@ function getRedactLabelColor(fill) {
   return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? '#1F2328' : '#FFFFFF';
 }
 
+// Redaction deliberately has NO sketch mode: the cover rectangle must stay
+// pixel-aligned and fully opaque. A wobbly hand-drawn edge would leak border
+// pixels of exactly the content this annotation exists to destroy, so a
+// sketch flag (global or per-annotation) is ignored here.
 function createRedact(annotation, { preview = false } = {}) {
   const mode = getRedactMode(annotation);
   // Integer coordinates keep the rectangle pixel-aligned: an anti-aliased edge
@@ -647,10 +878,18 @@ function createRedact(annotation, { preview = false } = {}) {
   return { defs, element, layer: 'bottom' };
 }
 
-function createConnector({ from, to, color = 'gray', strokeWidth = 2, style = 'dashed' }) {
+function createConnector({ from, to, color = 'gray', strokeWidth = 2, style = 'dashed', sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
   const [x1, y1] = from;
   const [x2, y2] = to;
+
+  if (sketch === true) {
+    const element = sketchShape('line', [x1, y1, x2, y2], sketchOptions({
+      stroke: c, strokeWidth, roughness, seed, dashed: style === 'dashed'
+    }));
+    if (element) return { defs: '', element };
+  }
+
   const dashArray = style === 'dashed' ? 'stroke-dasharray="8,5"' : '';
 
   return {
@@ -659,16 +898,16 @@ function createConnector({ from, to, color = 'gray', strokeWidth = 2, style = 'd
   };
 }
 
-function createIcon({ x, y, icon, color = 'green', size = 28, shadow = true }) {
+function createIcon({ x, y, icon, color = 'green', size = 28, shadow = true, sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
   const id = generateId('icon');
   const defs = [];
 
-  if (shadow) {
+  if (shadow && sketch !== true) {
     defs.push(createDropShadow(`${id}-shadow`));
   }
 
-  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+  const filterAttr = shadow && sketch !== true ? `filter="url(#${id}-shadow)"` : '';
   let iconPath;
 
   switch (icon) {
@@ -712,6 +951,14 @@ function createIcon({ x, y, icon, color = 'green', size = 28, shadow = true }) {
       iconPath = '';
   }
 
+  if (sketch === true) {
+    // Sketchy badge circle; the glyph strokes stay clean for legibility.
+    const badge = sketchShape('circle', [x, y, size * 2], sketchOptions({
+      stroke: adjustColor(c, -40), strokeWidth: 2, fill: c, fillStyle: 'solid', roughness, seed
+    }));
+    if (badge) return { defs: '', element: `<g>${badge}\n${iconPath}</g>` };
+  }
+
   return {
     defs: defs.join('\n'),
     element: `
@@ -723,18 +970,19 @@ function createIcon({ x, y, icon, color = 'green', size = 28, shadow = true }) {
   };
 }
 
-function createMeasure({ from, to, text, color = 'red', fontSize = 16, strokeWidth = 2, shadow = true }) {
+function createMeasure({ from, to, text, color = 'red', fontSize = 16, strokeWidth = 2, shadow = true, sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
   const id = generateId('measure');
   const defs = [];
   const elements = [];
   const [x1, y1] = from;
   const [x2, y2] = to;
+  const sketchOn = sketch === true && getRoughGenerator() !== null;
 
-  if (shadow) {
+  if (shadow && !sketchOn) {
     defs.push(createDropShadow(`${id}-shadow`, 2, 0.15));
   }
-  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+  const filterAttr = shadow && !sketchOn ? `filter="url(#${id}-shadow)"` : '';
 
   // Calculate line angle and perpendicular
   const dx = x2 - x1;
@@ -744,19 +992,25 @@ function createMeasure({ from, to, text, color = 'red', fontSize = 16, strokeWid
   const ny = dx / len;
   const tickLen = 10;
 
+  const lineOpts = () => sketchOptions({ stroke: c, strokeWidth, roughness, seed });
+
   // Main line
-  elements.push(`
+  elements.push(sketchOn ? sketchShape('line', [x1, y1, x2, y2], lineOpts()) : `
     <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
           stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" ${filterAttr}/>
   `);
 
   // Tick marks at both ends
-  elements.push(`
+  elements.push(sketchOn
+    ? sketchShape('line', [x1 + nx * tickLen, y1 + ny * tickLen, x1 - nx * tickLen, y1 - ny * tickLen], sketchOptions({ stroke: c, strokeWidth, roughness, seed: seed + 1 }))
+    : `
     <line x1="${x1 + nx * tickLen}" y1="${y1 + ny * tickLen}"
           x2="${x1 - nx * tickLen}" y2="${y1 - ny * tickLen}"
           stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round"/>
   `);
-  elements.push(`
+  elements.push(sketchOn
+    ? sketchShape('line', [x2 + nx * tickLen, y2 + ny * tickLen, x2 - nx * tickLen, y2 - ny * tickLen], sketchOptions({ stroke: c, strokeWidth, roughness, seed: seed + 2 }))
+    : `
     <line x1="${x2 + nx * tickLen}" y1="${y2 + ny * tickLen}"
           x2="${x2 - nx * tickLen}" y2="${y2 - ny * tickLen}"
           stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round"/>
@@ -771,107 +1025,254 @@ function createMeasure({ from, to, text, color = 'red', fontSize = 16, strokeWid
   const textW = getTextContentWidthPx(text, fontSize) + 12;
   const textH = fontSize * 1.4;
 
+  // The rough box lives inside the rotated group, so its local coordinates
+  // are the same as the clean rect's.
+  const box = sketchOn
+    ? sketchShape('rectangle', [-textW / 2, -textH / 2, textW, textH], sketchOptions({ stroke: c, strokeWidth: 1.5, fill: '#FFFFFF', fillStyle: 'solid', roughness, seed: seed + 3 }))
+    : `<rect x="${-textW / 2}" y="${-textH / 2}" width="${textW}" height="${textH}"
+            rx="4" fill="white" stroke="${c}" stroke-width="1.5"/>`;
+  const fontFamily = sketchOn ? HANDWRITING_FONT : CLEAN_FONT;
+
   elements.push(`
     <g transform="translate(${midX}, ${midY}) rotate(${textAngle})">
-      <rect x="${-textW / 2}" y="${-textH / 2}" width="${textW}" height="${textH}"
-            rx="4" fill="white" stroke="${c}" stroke-width="1.5"/>
+      ${box}
       <text x="0" y="${fontSize * 0.35}" text-anchor="middle" fill="${c}"
-            font-size="${fontSize}" font-weight="700" font-family="${CLEAN_FONT}">${escapeXml(text)}</text>
+            font-size="${fontSize}" font-weight="700" font-family="${fontFamily}">${escapeXml(text)}</text>
     </g>
   `);
 
   return { defs: defs.join('\n'), element: elements.join('\n') };
 }
 
-function createLeadout({ target, anchor, text, color = 'red', fontSize = 16, strokeWidth = 2, shadow = true }) {
+// Chip metrics shared with runtime.estimateAnnotationBounds, which mirrors this
+// box to know how much canvas a leadout occupies.
+const LEADOUT_LINE_HEIGHT = 1.3;
+
+function getLeadoutChipSize(text, fontSize) {
+  const lines = String(text).split('\n');
+  const padX = Math.round(fontSize * 0.75);
+  const padY = Math.round(fontSize * 0.4);
+  const lineHeight = fontSize * LEADOUT_LINE_HEIGHT;
+  const contentWidth = Math.max(0, ...lines.map((line) => getTextContentWidthPx(line, fontSize)));
+  return {
+    lines,
+    padX,
+    padY,
+    lineHeight,
+    width: contentWidth + padX * 2,
+    height: lines.length * lineHeight + padY * 2
+  };
+}
+
+// Leader line routed the way technical illustrations do it: a 45-degree run
+// from the target, then an axis-aligned run that meets the label edge head-on.
+// Falls back to a single straight segment when the two points are too close
+// for the elbow to fit. Returned as points so both the clean renderer (joined
+// into a path) and the sketch renderer (rough.linearPath) share the geometry.
+function buildLeadoutPoints(tx, ty, ex, ey, entryAxis) {
+  const runX = ex - tx;
+  const runY = ey - ty;
+  if (entryAxis === 'horizontal') {
+    const diag = Math.abs(runY);
+    if (diag > 0.5 && Math.abs(runX) > diag) {
+      return [[tx, ty], [tx + Math.sign(runX) * diag, ey], [ex, ey]];
+    }
+  } else {
+    const diag = Math.abs(runX);
+    if (diag > 0.5 && Math.abs(runY) > diag) {
+      return [[tx, ty], [ex, ty + Math.sign(runY) * diag], [ex, ey]];
+    }
+  }
+  return [[tx, ty], [ex, ey]];
+}
+
+function leadoutPointsToPath(points) {
+  return 'M' + points.map(([px, py]) => `${px},${py}`).join(' L');
+}
+
+function createLeadout({ target, anchor, text, color = 'red', fontSize = 16, strokeWidth = null, shadow = true, variant = 'soft', lineStyle = 'elbow', halo = true, font = null, handwriting = null, sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
   const id = generateId('leadout');
   const defs = [];
   const elements = [];
   const [tx, ty] = target;
   const [ax, ay] = anchor;
+  const sketchOn = sketch === true && getRoughGenerator() !== null;
+  const fontFamily = getSketchAwareFontFamily(font, handwriting, sketchOn);
+  // Leader weight follows the label size (~0.15em, never hairline-thin) so a
+  // leadout scaled up for a large screenshot keeps its proportions.
+  const sw = typeof strokeWidth === 'number' && strokeWidth > 0
+    ? strokeWidth
+    : Math.max(2, fontSize * 0.15);
 
-  if (shadow) {
-    defs.push(createDropShadow(`${id}-shadow`, 3, 0.2));
-  }
-  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+  // Label chip centred on the anchor.
+  const chip = getLeadoutChipSize(text, fontSize);
+  const boxX = ax - chip.width / 2;
+  const boxY = ay - chip.height / 2;
 
-  // Small dot at target
-  elements.push(`<circle cx="${tx}" cy="${ty}" r="5" fill="${c}"/>`);
+  // The leader meets the chip at the middle of whichever edge faces the
+  // target, so the visible joint is always perpendicular instead of clipping
+  // a corner at a random angle.
+  const dx = ax - tx;
+  const dy = ay - ty;
+  const entryAxis = Math.abs(dx) >= Math.abs(dy) ? 'horizontal' : 'vertical';
+  const ex = entryAxis === 'horizontal' ? ax - Math.sign(dx || 1) * (chip.width / 2) : ax;
+  const ey = entryAxis === 'horizontal' ? ay : ay - Math.sign(dy || 1) * (chip.height / 2);
 
-  // Connecting line
-  elements.push(`
-    <line x1="${tx}" y1="${ty}" x2="${ax}" y2="${ay}"
-          stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round"/>
+  const points = lineStyle === 'straight'
+    ? [[tx, ty], [ex, ey]]
+    : buildLeadoutPoints(tx, ty, ex, ey, entryAxis);
+
+  // White casing under the line and dot keeps them legible over busy
+  // screenshot content (the same trick maps use for leader lines). In sketch
+  // mode the casing follows the exact wobbled strokes rather than the ideal
+  // path, so halo and ink never drift apart.
+  const dotR = 2 + sw;
+  if (sketchOn) {
+    const gen = getRoughGenerator();
+    const linePaths = gen.toPaths(gen.linearPath(points, sketchOptions({ stroke: c, strokeWidth: sw, roughness, seed })));
+    if (halo) {
+      for (const p of linePaths) {
+        elements.push(`<path d="${p.d}" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="${sw + 3}" stroke-linecap="round" stroke-linejoin="round"/>`);
+      }
+    }
+    elements.push(roughPathsToSvg(linePaths));
+    if (halo) {
+      elements.push(`<circle cx="${tx}" cy="${ty}" r="${dotR + 2}" fill="rgba(255,255,255,0.9)"/>`);
+    }
+    elements.push(sketchShape('circle', [tx, ty, dotR * 2], sketchOptions({
+      stroke: c, strokeWidth: 1.5, fill: c, fillStyle: 'solid', roughness, seed: seed + 1
+    })));
+  } else {
+    const pathD = leadoutPointsToPath(points);
+    if (halo) {
+      elements.push(`
+    <path d="${pathD}" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="${sw + 3}" stroke-linecap="round" stroke-linejoin="round"/>
+  `);
+    }
+    elements.push(`
+    <path d="${pathD}" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>
   `);
 
-  // Text label box at anchor
-  const padding = 10;
-  const textW = getTextContentWidthPx(text, fontSize) + padding * 2;
-  const textH = fontSize * 1.4 + padding;
-  // Position box so anchor is at the edge closest to target
-  const boxX = ax - textW / 2;
-  const boxY = ay - textH / 2;
+    // Ring-style anchor dot: colour core with a white surround.
+    if (halo) {
+      elements.push(`<circle cx="${tx}" cy="${ty}" r="${dotR + 2}" fill="rgba(255,255,255,0.9)"/>`);
+    }
+    elements.push(`<circle cx="${tx}" cy="${ty}" r="${dotR}" fill="${c}"/>`);
+  }
+
+  if (shadow && !sketchOn) {
+    defs.push(createDropShadow(`${id}-shadow`, 3, 0.3, 0, 2));
+  }
+  const filterAttr = shadow && !sketchOn ? `filter="url(#${id}-shadow)"` : '';
+
+  const cornerRadius = Math.min(8, chip.height / 2);
+  // Chip faces: 'soft' (default) = light tint of the accent with an accent
+  // border and dark text — calm and readable, matching Excalidraw's
+  // stroke-plus-light-background palette; 'filled' = solid accent with
+  // auto-contrast text for maximum punch; 'outline' = white with an accent
+  // border.
+  const chipFill = variant === 'filled' ? c : (variant === 'outline' ? '#FFFFFF' : tintColor(c));
+  const chipStroke = variant === 'filled' ? null : c;
+  const textColor = variant === 'filled' ? getRedactLabelColor(c) : '#1F2328';
+  let chipRect;
+  if (sketchOn) {
+    chipRect = sketchShape('rectangle', [boxX, boxY, chip.width, chip.height], sketchOptions({
+      stroke: chipStroke || adjustColor(c, -40), strokeWidth: 1.5, fill: chipFill, fillStyle: 'solid', roughness, seed: seed + 2
+    }));
+  } else {
+    const strokeAttr = chipStroke ? ` stroke="${chipStroke}" stroke-width="1.5" stroke-linejoin="round"` : '';
+    chipRect = `<rect x="${boxX}" y="${boxY}" width="${chip.width}" height="${chip.height}"
+            rx="${cornerRadius}" fill="${chipFill}"${strokeAttr}/>`;
+  }
+
+  const textElements = chip.lines.map((lineText, index) => {
+    const baseline = boxY + chip.padY + chip.lineHeight * (index + 0.5) + fontSize * 0.35;
+    return `<tspan x="${ax}" y="${baseline}">${escapeXml(lineText)}</tspan>`;
+  }).join('');
 
   elements.push(`
     <g ${filterAttr}>
-      <rect x="${boxX}" y="${boxY}" width="${textW}" height="${textH}"
-            rx="8" fill="white" stroke="${c}" stroke-width="2" stroke-linejoin="round"/>
-      <text x="${ax}" y="${ay + fontSize * 0.35 - textH * 0.05}" text-anchor="middle" fill="${c}"
-            font-size="${fontSize}" font-weight="700" font-family="${CLEAN_FONT}">${escapeXml(text)}</text>
+      ${chipRect}
+      <text text-anchor="middle" fill="${textColor}"
+            font-size="${fontSize}" font-weight="600" font-family="${fontFamily}">${textElements}</text>
     </g>
   `);
 
   return { defs: defs.join('\n'), element: elements.join('\n') };
 }
 
-function createBracketLabel({ from, to, direction = 'right', text, color = 'red', fontSize = 16, strokeWidth = 2, shadow = true }) {
+function createBracketLabel({ from, to, direction = 'right', text, color = 'red', fontSize = 16, strokeWidth = 2, shadow = true, sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
   const id = generateId('bracket');
   const defs = [];
   const elements = [];
   const [x1, y1] = from;
   const [x2, y2] = to;
+  const sketchOn = sketch === true && getRoughGenerator() !== null;
 
-  if (shadow) {
+  if (shadow && !sketchOn) {
     defs.push(createDropShadow(`${id}-shadow`, 2, 0.15));
   }
-  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+  const filterAttr = shadow && !sketchOn ? `filter="url(#${id}-shadow)"` : '';
 
   const bracketDepth = 20;
   const midX = (x1 + x2) / 2;
   const midY = (y1 + y2) / 2;
-  let bracketPath;
+  // The bracket is two polylines (each half ends at the centre tick), shared
+  // between the clean path and the sketch renderer.
+  let segments;
   let labelX, labelY;
 
   switch (direction) {
     case 'right':
-      bracketPath = `M${x1},${y1} L${x1 + bracketDepth},${y1} L${x1 + bracketDepth},${midY} L${x1 + bracketDepth + 10},${midY} M${x1 + bracketDepth},${midY} L${x1 + bracketDepth},${y2} L${x1},${y2}`;
+      segments = [
+        [[x1, y1], [x1 + bracketDepth, y1], [x1 + bracketDepth, midY], [x1 + bracketDepth + 10, midY]],
+        [[x1 + bracketDepth, midY], [x1 + bracketDepth, y2], [x1, y2]]
+      ];
       labelX = x1 + bracketDepth + 16;
       labelY = midY;
       break;
     case 'left':
-      bracketPath = `M${x1},${y1} L${x1 - bracketDepth},${y1} L${x1 - bracketDepth},${midY} L${x1 - bracketDepth - 10},${midY} M${x1 - bracketDepth},${midY} L${x1 - bracketDepth},${y2} L${x1},${y2}`;
+      segments = [
+        [[x1, y1], [x1 - bracketDepth, y1], [x1 - bracketDepth, midY], [x1 - bracketDepth - 10, midY]],
+        [[x1 - bracketDepth, midY], [x1 - bracketDepth, y2], [x1, y2]]
+      ];
       labelX = x1 - bracketDepth - 16;
       labelY = midY;
       break;
     case 'bottom':
-      bracketPath = `M${x1},${y1} L${x1},${y1 + bracketDepth} L${midX},${y1 + bracketDepth} L${midX},${y1 + bracketDepth + 10} M${midX},${y1 + bracketDepth} L${x2},${y1 + bracketDepth} L${x2},${y1}`;
+      segments = [
+        [[x1, y1], [x1, y1 + bracketDepth], [midX, y1 + bracketDepth], [midX, y1 + bracketDepth + 10]],
+        [[midX, y1 + bracketDepth], [x2, y1 + bracketDepth], [x2, y1]]
+      ];
       labelX = midX;
       labelY = y1 + bracketDepth + 20;
       break;
     case 'top':
     default:
-      bracketPath = `M${x1},${y1} L${x1},${y1 - bracketDepth} L${midX},${y1 - bracketDepth} L${midX},${y1 - bracketDepth - 10} M${midX},${y1 - bracketDepth} L${x2},${y1 - bracketDepth} L${x2},${y1}`;
+      segments = [
+        [[x1, y1], [x1, y1 - bracketDepth], [midX, y1 - bracketDepth], [midX, y1 - bracketDepth - 10]],
+        [[midX, y1 - bracketDepth], [x2, y1 - bracketDepth], [x2, y1]]
+      ];
       labelX = midX;
       labelY = y1 - bracketDepth - 20;
       break;
   }
 
   // Bracket path
-  elements.push(`
+  if (sketchOn) {
+    segments.forEach((pts, i) => {
+      elements.push(sketchShape('linearPath', [pts], sketchOptions({ stroke: c, strokeWidth, roughness, seed: seed + i })));
+    });
+  } else {
+    const bracketPath = segments
+      .map((pts) => 'M' + pts.map(([px, py]) => `${px},${py}`).join(' L'))
+      .join(' ');
+    elements.push(`
     <path d="${bracketPath}" fill="none" stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" ${filterAttr}/>
   `);
+  }
 
   // Text label
   const padding = 8;
@@ -879,15 +1280,16 @@ function createBracketLabel({ from, to, direction = 'right', text, color = 'red'
   const textH = fontSize * 1.4 + padding;
   const textAnchor = direction === 'left' ? 'end' : (direction === 'right' ? 'start' : 'middle');
 
+  const labelFont = sketchOn ? HANDWRITING_FONT : CLEAN_FONT;
   elements.push(`
     <text x="${labelX}" y="${labelY + fontSize * 0.35}" text-anchor="${textAnchor}" fill="${c}"
-          font-size="${fontSize}" font-weight="700" font-family="${CLEAN_FONT}">${escapeXml(text)}</text>
+          font-size="${fontSize}" font-weight="700" font-family="${labelFont}">${escapeXml(text)}</text>
   `);
 
   return { defs: defs.join('\n'), element: elements.join('\n') };
 }
 
-function createSpotlight({ x, y, radius, width: spotWidth, height: spotHeight, color = 'primary', strokeWidth = 2, opacity = 0.5 }) {
+function createSpotlight({ x, y, radius, width: spotWidth, height: spotHeight, color = 'primary', strokeWidth = 2, opacity = 0.5, sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
   const id = generateId('spotlight');
   const defs = [];
@@ -897,6 +1299,29 @@ function createSpotlight({ x, y, radius, width: spotWidth, height: spotHeight, c
   // The mask approach works with a large enough rect (the SVG viewBox covers the image).
   const maskId = `${id}-mask`;
   const useRect = spotWidth && spotHeight;
+  const gen = sketch === true ? getRoughGenerator() : null;
+
+  if (gen) {
+    // One rough drawable supplies both the mask cutout (its solid fill path)
+    // and the visible ring (its stroke paths), so the wobbly hole and the
+    // wobbly outline coincide exactly.
+    const opts = sketchOptions({ stroke: c, strokeWidth, fill: '#000000', fillStyle: 'solid', roughness, seed });
+    const drawable = useRect
+      ? gen.rectangle(x - spotWidth / 2, y - spotHeight / 2, spotWidth, spotHeight, opts)
+      : gen.circle(x, y, (radius || 60) * 2, opts);
+    const paths = gen.toPaths(drawable);
+    const fillPaths = paths.filter((p) => p.fill && p.fill !== 'none');
+    const strokePaths = paths.filter((p) => !p.fill || p.fill === 'none');
+    defs.push(`
+      <mask id="${maskId}">
+        <rect x="0" y="0" width="100%" height="100%" fill="white"/>
+        ${fillPaths.map((p) => `<path d="${p.d}" fill="black"/>`).join('\n')}
+      </mask>
+    `);
+    elements.push(`<rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,${opacity})" mask="url(#${maskId})"/>`);
+    elements.push(roughPathsToSvg(strokePaths));
+    return { defs: defs.join('\n'), element: elements.join('\n') };
+  }
 
   if (useRect) {
     defs.push(`
@@ -924,33 +1349,44 @@ function createSpotlight({ x, y, radius, width: spotWidth, height: spotHeight, c
   return { defs: defs.join('\n'), element: elements.join('\n') };
 }
 
-function createMagnifier({ target, anchor, radius = 60, zoom = 2, borderColor = 'primary', strokeWidth = 2, shadow = true }) {
+function createMagnifier({ target, anchor, radius = 60, zoom = 2, borderColor = 'primary', strokeWidth = 2, shadow = true, sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(borderColor);
   const id = generateId('magnifier');
   const defs = [];
   const elements = [];
   const [tx, ty] = target;
   const [ax, ay] = anchor;
+  const sketchOn = sketch === true && getRoughGenerator() !== null;
 
-  if (shadow) {
+  if (shadow && !sketchOn) {
     defs.push(createDropShadow(`${id}-shadow`, 4, 0.25));
   }
-  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+  const filterAttr = shadow && !sketchOn ? `filter="url(#${id}-shadow)"` : '';
 
-  // Arrow head for the connector line
-  const headSize = 8;
-  defs.push(`
+  if (sketchOn) {
+    // Sketchy connector with a two-stroke head. The lens ring below stays a
+    // clean circle on purpose: Sharp crops the magnified pixels as a perfect
+    // circle, and a wobbly ring around a crisp crop would expose the seam.
+    const shaft = sketchShape('line', [ax, ay, tx, ty], sketchOptions({ stroke: c, strokeWidth: 2, roughness, seed }));
+    const head = sketchArrowHead(tx, ty, Math.atan2(ty - ay, tx - ax), 10,
+      sketchOptions({ stroke: c, strokeWidth: 2, roughness, seed: seed + 1 }));
+    elements.push(`<g opacity="0.85">${shaft}\n${head || ''}</g>`);
+  } else {
+    // Arrow head for the connector line
+    const headSize = 8;
+    defs.push(`
     <marker id="${id}-head" markerWidth="${headSize}" markerHeight="${headSize * 0.7}"
             refX="${headSize - 1}" refY="${headSize * 0.35}" orient="auto" markerUnits="userSpaceOnUse">
       <polygon points="0 0, ${headSize} ${headSize * 0.35}, 0 ${headSize * 0.7}" fill="${c}"/>
     </marker>
   `);
 
-  // Connector line from anchor to target
-  elements.push(`
+    // Connector line from anchor to target
+    elements.push(`
     <line x1="${ax}" y1="${ay}" x2="${tx}" y2="${ty}"
           stroke="${c}" stroke-width="2" stroke-linecap="round" opacity="0.8" marker-end="url(#${id}-head)"/>
   `);
+  }
 
   // Small cross-hair at target
   const ch = 8;
@@ -968,6 +1404,20 @@ function createMagnifier({ target, anchor, radius = 60, zoom = 2, borderColor = 
   return { defs: defs.join('\n'), element: elements.join('\n') };
 }
 
+// Light tint of a colour (mixed towards white). Non-hex inputs fall back to
+// plain white rather than guessing.
+function tintColor(hex, ratio = 0.85) {
+  const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex);
+  if (!match) return '#FFFFFF';
+  let h = match[1];
+  if (h.length === 3) h = h.split('').map((ch) => ch + ch).join('');
+  const mix = (v) => Math.round(v + (255 - v) * ratio);
+  const r = mix(parseInt(h.slice(0, 2), 16));
+  const g = mix(parseInt(h.slice(2, 4), 16));
+  const b = mix(parseInt(h.slice(4, 6), 16));
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0').toUpperCase()}`;
+}
+
 function adjustColor(hex, amount) {
   const num = parseInt(hex.replace('#', ''), 16);
   const r = Math.min(255, Math.max(0, (num >> 16) + amount));
@@ -980,7 +1430,8 @@ function adjustColor(hex, amount) {
 // real numbers. Anything else is dropped so the create* default applies.
 const NUMERIC_ANNOTATION_FIELDS = [
   'x', 'y', 'width', 'height', 'radius', 'size', 'fontSize', 'strokeWidth',
-  'cornerRadius', 'opacity', 'intensity', 'curve', 'padding', 'zoom', 'blockSize'
+  'cornerRadius', 'opacity', 'intensity', 'curve', 'padding', 'zoom', 'blockSize',
+  'roughness', 'seed'
 ];
 
 function sanitizeNumericFields(annotation) {
@@ -1013,7 +1464,10 @@ function buildSvgParts(annotations, options = {}) {
     options = { theme: options };
   }
 
-  const { theme = null, defaultSizes = {}, customThemes = null } = options;
+  const { theme = null, defaultSizes = {}, customThemes = null, sketch = false } = options;
+  // The 'sketch' theme implies the hand-drawn renderer for every annotation,
+  // same as passing options.sketch = true.
+  const sketchAll = sketch === true || theme === 'sketch';
 
   if (!Array.isArray(annotations)) {
     throw invalidParameter('Annotations must be an array', 'annotations');
@@ -1040,8 +1494,20 @@ function buildSvgParts(annotations, options = {}) {
     if (defaultSizes.strokeWidth && !mergedAnn.strokeWidth && (mergedAnn.type === 'arrow' || mergedAnn.type === 'curved-arrow' || mergedAnn.type === 'connector')) {
       mergedAnn = { ...mergedAnn, strokeWidth: defaultSizes.strokeWidth };
     }
-    if (defaultSizes.fontSize && !mergedAnn.fontSize && (mergedAnn.type === 'label' || mergedAnn.type === 'callout')) {
+    if (defaultSizes.fontSize && !mergedAnn.fontSize && (mergedAnn.type === 'label' || mergedAnn.type === 'callout' || mergedAnn.type === 'leadout')) {
       mergedAnn = { ...mergedAnn, fontSize: defaultSizes.fontSize };
+    }
+
+    // Redact/blur never sketch (see createRedact); everything else follows the
+    // global flag unless the annotation says otherwise. Per-index default
+    // seeds keep re-renders identical while neighbouring shapes wobble
+    // differently.
+    const isRedactType = mergedAnn.type === 'redact' || mergedAnn.type === 'blur';
+    if (sketchAll && mergedAnn.sketch === undefined && !isRedactType) {
+      mergedAnn = { ...mergedAnn, sketch: true };
+    }
+    if (mergedAnn.sketch === true && mergedAnn.seed === undefined) {
+      mergedAnn = { ...mergedAnn, seed: index + 1 };
     }
 
     let result;
@@ -1153,6 +1619,9 @@ const api = {
   escapeXml,
   getColor,
   getFontFamily,
+  getRoughGenerator,
+  sketchOptions,
+  sketchShape,
   sanitizeNumericFields,
   setIdGenerator,
   resetIdGenerator,
@@ -1173,11 +1642,13 @@ const api = {
   createConnector,
   createIcon,
   createMeasure,
+  getLeadoutChipSize,
   createLeadout,
   createBracketLabel,
   createSpotlight,
   createMagnifier,
   adjustColor,
+  tintColor,
   buildSvgParts,
   buildSvg
 };

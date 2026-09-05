@@ -17,7 +17,7 @@ Annotation types available:
 • connector - Dashed lines between elements
 • icon - Icon badges (check, x, warning, info, question)
 • measure - Dimension measurement lines with tick marks and centered text
-• leadout - Leader line callout with dot at target and text label at anchor
+• leadout - Leader line callout: ringed dot at target, 45° elbow line, filled label chip at anchor
 • bracket-label - Bracket annotation grouping an area with a label
 • spotlight - Dark overlay with cutout to focus on a specific area
 
@@ -30,7 +30,12 @@ Quick reference for common tasks:
 • Bracket: {"type":"bracket-label","from":[50,100],"to":[50,300],"direction":"right","text":"Group A"}
 • Spotlight: {"type":"spotlight","x":200,"y":200,"radius":80}
 
-Themes: documentation, tutorial, bugReport, highlight
+Themes: documentation, tutorial, bugReport, highlight, sketch
+
+Sketch style: set top-level "sketch": true (or theme "sketch") to draw every
+annotation hand-drawn Excalidraw-style (rough.js): wobbly double strokes,
+hachure fills, handwriting fonts. Per-annotation "sketch", "roughness" and
+"seed" fine-tune it. Redact regions always stay crisp for safety.
 
 Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
         white, black, gray, lightGray, darkGray,
@@ -84,8 +89,12 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
         },
         theme: {
           type: 'string',
-          enum: ['documentation', 'tutorial', 'bugReport', 'highlight'],
-          description: 'Apply a preset theme for consistent styling'
+          enum: ['documentation', 'tutorial', 'bugReport', 'highlight', 'sketch'],
+          description: 'Apply a preset theme for consistent styling. "sketch" renders everything hand-drawn (Excalidraw-style) with near-black ink.'
+        },
+        sketch: {
+          type: 'boolean',
+          description: 'Render every annotation in a hand-drawn Excalidraw-like style (rough.js): wobbly double strokes, hachure fills, handwriting fonts. Redact/blur regions are exempt and always stay crisp. Individual annotations can opt out with "sketch": false.'
         },
         redact_patterns: {
           type: 'array',
@@ -130,9 +139,17 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
               fontSize: { type: 'number', minimum: 0, description: 'Text size in image pixels for labels and callouts.' },
               strokeWidth: { type: 'number', minimum: 0, description: 'Line thickness in image pixels for arrows, outlines, and connectors.' },
               style: { type: 'string', enum: ['filled', 'outline', 'badge', 'solid', 'dashed'] },
+              variant: { type: 'string', enum: ['soft', 'filled', 'outline'], description: 'Leadout label chip style. "soft" (default): light tint of the accent with accent border and dark text — calm and readable. "filled": solid accent chip with auto-contrast text for maximum emphasis. "outline": white chip with accent border.' },
+              lineStyle: { type: 'string', enum: ['elbow', 'straight'], description: 'Leadout leader routing. "elbow" (default) leaves the target at 45° then runs axis-aligned into the label edge; "straight" connects directly.' },
+              halo: { type: 'boolean', description: 'Leadout only: draw a white casing under the leader line and target dot so they stay legible over busy content (default: true).' },
               pointer: { type: 'string', enum: ['top', 'bottom', 'left', 'right'] },
               icon: { type: 'string', enum: ['check', 'x', 'warning', 'info', 'question'] },
               shadow: { type: 'boolean' },
+              sketch: { type: 'boolean', description: 'Hand-drawn rendering for this annotation (overrides the top-level sketch flag; ignored by redact/blur).' },
+              roughness: { type: 'number', minimum: 0, maximum: 5, description: 'Sketch wobble amount (default 1, Excalidraw "artist"). 0.5 is subtle, 2+ is cartoonish.' },
+              seed: { type: 'number', minimum: 1, description: 'Random seed for sketch strokes. Defaults to the annotation index so re-renders are reproducible.' },
+              font: { type: 'string', description: 'Font family override for text-bearing annotations (label, callout, leadout).' },
+              handwriting: { type: 'boolean', description: 'Use the handwriting font stack for text (implied by sketch mode).' },
               curve: { type: 'number', minimum: -500, maximum: 500, description: 'Curve strength for curved arrows. Negative values bend one direction and positive values bend the other.' },
               cornerRadius: { type: 'number', minimum: 0, description: 'Corner radius in image pixels for rounded rectangles or labels.' },
               opacity: { type: 'number', minimum: 0, maximum: 1, description: 'Transparency from 0 for fully transparent to 1 for fully opaque.' }

@@ -20,6 +20,7 @@ const {
   LINE_HEIGHT_RATIO,
   getSizePreset,
   getTextContentWidthPx,
+  getLeadoutChipSize,
   escapeXml,
   buildSvg,
   getRedactMode,
@@ -898,12 +899,15 @@ function getBoundingBox(annotation, sizePreset) {
       const [tx, ty] = annotation.target || [0, 0];
       const [ax, ay] = annotation.anchor || [0, 0];
       const fontSize = annotation.fontSize || preset.fontSize || 16;
-      const textW = 100;
-      const textH = fontSize * 1.4 + 10;
-      const minX = Math.min(tx, ax - textW / 2);
-      const minY = Math.min(ty, ay - textH / 2);
-      const maxX = Math.max(tx, ax + textW / 2);
-      const maxY = Math.max(ty, ay + textH / 2);
+      const chip = annotation.text !== undefined
+        ? getLeadoutChipSize(annotation.text, fontSize)
+        : { width: 100, height: fontSize * 1.4 + 10 };
+      // 7 ≈ target dot radius plus its white halo ring.
+      const dotPad = 7;
+      const minX = Math.min(tx - dotPad, ax - chip.width / 2);
+      const minY = Math.min(ty - dotPad, ay - chip.height / 2);
+      const maxX = Math.max(tx + dotPad, ax + chip.width / 2);
+      const maxY = Math.max(ty + dotPad, ay + chip.height / 2);
       return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
     }
     case 'bracket-label': {

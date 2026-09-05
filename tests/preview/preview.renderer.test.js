@@ -56,7 +56,12 @@ describe('preview/renderer.js', () => {
     });
 
     it('honours every theme font the same way annotate.js does', () => {
-      for (const [name, theme] of Object.entries(annotate.THEMES)) {
+      // The sketch theme sets no explicit fonts (its text falls back to the
+      // handwriting stack via the sketch flag), so only font-carrying themes
+      // are asserted here.
+      const themed = Object.entries(annotate.THEMES).filter(([, theme]) => theme.label && theme.label.font);
+      expect(themed.length).toBeGreaterThanOrEqual(4);
+      for (const [name, theme] of themed) {
         const args = { x: 50, y: 50, text: 'sample', shadow: false, font: theme.label.font };
         expect(fontFamilyOf(preview.createLabel(args))).toBe(theme.label.font);
         expect(fontFamilyOf(annotate.createLabel(args))).toBe(theme.label.font);

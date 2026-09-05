@@ -24,10 +24,12 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', '..', 'config-ui', 'public')));
 
 // The preview adapter builds on the same renderer the CLI/MCP path uses, so
-// both files are served and the page loads render.js first.
+// both files are served and the page loads render.js first. vendor/rough.js
+// enables the hand-drawn sketch style in browser previews.
 const BROWSER_MODULES = {
   '/annotate/render.js': path.join(__dirname, '..', 'annotate', 'render.js'),
-  '/preview/renderer.js': path.join(__dirname, '..', 'preview', 'renderer.js')
+  '/preview/renderer.js': path.join(__dirname, '..', 'preview', 'renderer.js'),
+  '/vendor/rough.js': path.join(__dirname, '..', 'vendor', 'rough.js')
 };
 
 for (const [route, filePath] of Object.entries(BROWSER_MODULES)) {

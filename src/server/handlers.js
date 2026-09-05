@@ -24,7 +24,7 @@ function getOutputPath(inputPath, suffix = '-annotated', outputFormat = null) {
 }
 
 async function handleAnnotate(args) {
-  const { input_path, output_path, annotations, theme, output_format, quality, device_pixel_ratio, canvas_padding, redact_patterns } = args;
+  const { input_path, output_path, annotations, theme, sketch, output_format, quality, device_pixel_ratio, canvas_padding, redact_patterns } = args;
 
   if (!fs.existsSync(input_path)) {
     throw new FileNotFoundError(input_path);
@@ -33,6 +33,7 @@ async function handleAnnotate(args) {
   const finalPath = output_path || getOutputPath(input_path, '-annotated', output_format || null);
   const result = await annotateImage(input_path, finalPath, annotations, {
     theme,
+    sketch: sketch === true,
     outputFormat: output_format,
     quality,
     devicePixelRatio: device_pixel_ratio,
