@@ -215,6 +215,113 @@ function getTextContentWidthPx(line, fontSize) {
 const DEFAULT_PADDING = 14;
 const LINE_HEIGHT_RATIO = 1.5;
 
+// Greedy wrapping works on break units: a run of whitespace, a single East
+// Asian wide character (breakable on either side, like browsers do), or a run
+// of narrow characters (a latin word, kept whole unless wider than the box).
+function splitBreakUnits(line) {
+  const units = [];
+  let i = 0;
+  while (i < line.length) {
+    const cp = line.codePointAt(i);
+    const charLen = cp > 0xffff ? 2 : 1;
+    if (/\s/.test(line[i])) {
+      let j = i;
+      while (j < line.length && /\s/.test(line[j])) j++;
+      units.push({ text: line.slice(i, j), space: true });
+      i = j;
+    } else if (isEastAsianWide(cp)) {
+      units.push({ text: line.slice(i, i + charLen), space: false });
+      i += charLen;
+    } else {
+      let j = i;
+      while (j < line.length && !/\s/.test(line[j])) {
+        const cp2 = line.codePointAt(j);
+        if (isEastAsianWide(cp2)) break;
+        j += cp2 > 0xffff ? 2 : 1;
+      }
+      units.push({ text: line.slice(i, j), space: false });
+      i = j;
+    }
+  }
+  return units;
+}
+
+// Split a single unit that is wider than the box at codepoint boundaries.
+function hardSplitUnit(text, fontSize, maxWidthPx) {
+  const pieces = [];
+  let current = '';
+  let currentWidth = 0;
+  for (let i = 0; i < text.length;) {
+    const cp = text.codePointAt(i);
+    const charLen = cp > 0xffff ? 2 : 1;
+    const ch = text.slice(i, i + charLen);
+    const chWidth = getTextContentWidthPx(ch, fontSize);
+    if (current && currentWidth + chWidth > maxWidthPx) {
+      pieces.push(current);
+      current = '';
+      currentWidth = 0;
+    }
+    current += ch;
+    currentWidth += chWidth;
+    i += charLen;
+  }
+  if (current) pieces.push(current);
+  return pieces;
+}
+
+/**
+ * Wrap text to maxWidthPx using the same width estimate the renderers draw
+ * with. Explicit newlines always break; maxWidthPx of null/0 disables
+ * wrapping entirely, which keeps legacy callers byte-identical.
+ */
+function wrapTextLines(text, fontSize, maxWidthPx) {
+  const source = typeof text === 'string' ? text : String(text === undefined || text === null ? '' : text);
+  const hardLines = source.split('\n');
+  if (!Number.isFinite(maxWidthPx) || maxWidthPx <= 0) return hardLines;
+
+  const out = [];
+  for (const hardLine of hardLines) {
+    const units = splitBreakUnits(hardLine);
+    let line = '';
+    let lineWidth = 0;
+    const flush = () => {
+      out.push(line.replace(/\s+$/, ''));
+      line = '';
+      lineWidth = 0;
+    };
+    for (const unit of units) {
+      const unitWidth = getTextContentWidthPx(unit.text, fontSize);
+      if (line && !unit.space && lineWidth + unitWidth > maxWidthPx) flush();
+      if (unit.space && !line) continue; // never start a wrapped line with spaces
+      if (!unit.space && unitWidth > maxWidthPx) {
+        const pieces = hardSplitUnit(unit.text, fontSize, maxWidthPx);
+        for (let p = 0; p < pieces.length; p++) {
+          if (p > 0) flush();
+          line += pieces[p];
+          lineWidth += getTextContentWidthPx(pieces[p], fontSize);
+        }
+      } else {
+        line += unit.text;
+        lineWidth += unitWidth;
+      }
+    }
+    out.push(line.replace(/\s+$/, ''));
+  }
+  return out;
+}
+
+/**
+ * Single source of truth for how much space a block of annotation text takes.
+ * Renderers and runtime.getBoundingBox must both use this so collision boxes
+ * cannot drift from what actually gets drawn.
+ */
+function measureTextBlock(text, fontSize, { maxWidth = null, lineHeightRatio = LINE_HEIGHT_RATIO } = {}) {
+  const lines = wrapTextLines(text, fontSize, maxWidth);
+  const lineHeight = fontSize * lineHeightRatio;
+  const width = Math.max(0, ...lines.map((line) => getTextContentWidthPx(line, fontSize)));
+  return { lines, width, height: lines.length * lineHeight, lineHeight };
+}
+
 function escapeXml(text) {
   if (typeof text !== 'string') return String(text);
   return text
@@ -362,7 +469,7 @@ function createDropShadow(id, blur = 4, opacity = 0.3, dx = 2, dy = 2) {
   `;
 }
 
-function createMarker({ x, y, number, color = 'red', size = 32, shadow = true, style = 'filled', sketch = false, roughness = 1, seed = 1 }) {
+function createMarker({ x, y, number = 1, color = 'red', size = 32, shadow = true, style = 'filled', sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
 
   if (sketch === true) {
@@ -444,19 +551,42 @@ function sketchArrowHead(x2, y2, angle, headSize, opts) {
   return head1 && head2 ? head1 + '\n' + head2 : null;
 }
 
-function createArrow({ from, to, color = 'red', strokeWidth = 2, style = 'solid', headStyle = 'filled', shadow = true, sketch = false, roughness = 1, seed = 1 }) {
+function createArrow({ from, to, color = 'red', strokeWidth = 2, style = 'solid', headStyle = 'filled', heads = 'end', lineStyle = 'straight', shadow = true, sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
   const [x1, y1] = from;
   const [x2, y2] = to;
+  const wantEnd = heads !== 'start' && heads !== 'none';
+  const wantStart = heads === 'start' || heads === 'both';
+  // Elbow routing reuses the leadout leader geometry: a 45-degree run followed
+  // by an axis-aligned run, entering the target along the dominant axis.
+  const entryAxis = Math.abs(x2 - x1) >= Math.abs(y2 - y1) ? 'horizontal' : 'vertical';
+  const points = lineStyle === 'elbow' ? buildLeadoutPoints(x1, y1, x2, y2, entryAxis) : [[x1, y1], [x2, y2]];
 
   if (sketch === true) {
-    const shaft = sketchShape('line', [x1, y1, x2, y2], sketchOptions({
-      stroke: c, strokeWidth, roughness, seed, dashed: style === 'dashed'
-    }));
+    const shaft = points.length > 2
+      ? sketchShape('linearPath', [points], sketchOptions({
+        stroke: c, strokeWidth, roughness, seed, dashed: style === 'dashed'
+      }))
+      : sketchShape('line', [x1, y1, x2, y2], sketchOptions({
+        stroke: c, strokeWidth, roughness, seed, dashed: style === 'dashed'
+      }));
     const headSize = Math.max(12, strokeWidth * 4);
-    const head = shaft && sketchArrowHead(x2, y2, Math.atan2(y2 - y1, x2 - x1), headSize,
-      sketchOptions({ stroke: c, strokeWidth, roughness, seed: seed + 1 }));
-    if (shaft && head) return { defs: '', element: shaft + '\n' + head };
+    // Head angles follow the segments actually touching each endpoint, so
+    // elbow arrows get correctly oriented heads.
+    const [px, py] = points[points.length - 2];
+    const [qx, qy] = points[1];
+    const headParts = [];
+    if (wantEnd) {
+      headParts.push(shaft && sketchArrowHead(x2, y2, Math.atan2(y2 - py, x2 - px), headSize,
+        sketchOptions({ stroke: c, strokeWidth, roughness, seed: seed + 1 })));
+    }
+    if (wantStart) {
+      headParts.push(shaft && sketchArrowHead(x1, y1, Math.atan2(y1 - qy, x1 - qx), headSize,
+        sketchOptions({ stroke: c, strokeWidth, roughness, seed: seed + 2 })));
+    }
+    if (shaft && headParts.every(Boolean)) {
+      return { defs: '', element: [shaft, ...headParts].join('\n') };
+    }
   }
 
   const id = generateId('arrow');
@@ -468,29 +598,60 @@ function createArrow({ from, to, color = 'red', strokeWidth = 2, style = 'solid'
 
   const headSize = Math.max(10, strokeWidth * 3);
   if (headStyle === 'filled') {
-    defs.push(`
+    if (wantEnd) {
+      defs.push(`
       <marker id="${id}-head" markerWidth="${headSize}" markerHeight="${headSize * 0.7}"
               refX="${headSize - 1}" refY="${headSize * 0.35}" orient="auto" markerUnits="userSpaceOnUse">
         <polygon points="0 0, ${headSize} ${headSize * 0.35}, 0 ${headSize * 0.7}" fill="${c}"/>
       </marker>
     `);
+    }
+    if (wantStart) {
+      defs.push(`
+      <marker id="${id}-tail" markerWidth="${headSize}" markerHeight="${headSize * 0.7}"
+              refX="1" refY="${headSize * 0.35}" orient="auto" markerUnits="userSpaceOnUse">
+        <polygon points="${headSize} 0, 0 ${headSize * 0.35}, ${headSize} ${headSize * 0.7}" fill="${c}"/>
+      </marker>
+    `);
+    }
   } else if (headStyle === 'open') {
-    defs.push(`
+    if (wantEnd) {
+      defs.push(`
       <marker id="${id}-head" markerWidth="${headSize}" markerHeight="${headSize * 0.7}"
               refX="${headSize - 1}" refY="${headSize * 0.35}" orient="auto" markerUnits="userSpaceOnUse">
         <polyline points="0 0, ${headSize} ${headSize * 0.35}, 0 ${headSize * 0.7}"
                   fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round"/>
       </marker>
     `);
+    }
+    if (wantStart) {
+      defs.push(`
+      <marker id="${id}-tail" markerWidth="${headSize}" markerHeight="${headSize * 0.7}"
+              refX="1" refY="${headSize * 0.35}" orient="auto" markerUnits="userSpaceOnUse">
+        <polyline points="${headSize} 0, 0 ${headSize * 0.35}, ${headSize} ${headSize * 0.7}"
+                  fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round"/>
+      </marker>
+    `);
+    }
   }
 
   const dashArray = style === 'dashed' ? 'stroke-dasharray="10,5"' : '';
   const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+  const markerAttrs = [
+    wantStart ? `marker-start="url(#${id}-tail)"` : '',
+    wantEnd ? `marker-end="url(#${id}-head)"` : ''
+  ].filter(Boolean).join(' ');
 
-  const element = `
+  const element = points.length > 2
+    ? `
+    <path d="${leadoutPointsToPath(points)}" fill="none"
+          stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"
+          ${markerAttrs} ${dashArray} ${filterAttr}/>
+  `
+    : `
     <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
           stroke="${c}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"
-          marker-end="url(#${id}-head)" ${dashArray} ${filterAttr}/>
+          ${markerAttrs} ${dashArray} ${filterAttr}/>
   `;
 
   return { defs: defs.join('\n'), element };
@@ -552,7 +713,7 @@ function createCurvedArrow({ from, to, curve = 50, color = 'red', strokeWidth = 
   return { defs: defs.join('\n'), element };
 }
 
-function createCallout({ x, y, text, color = 'primary', background = 'white', width = null, pointer = 'bottom', fontSize = 18, shadow = true, handwriting = null, font = null, sketch = false, roughness = 1, seed = 1 }) {
+function createCallout({ x, y, text, color = 'primary', background = 'white', width = null, maxWidth = null, pointer = 'bottom', fontSize = 18, shadow = true, handwriting = null, font = null, sketch = false, roughness = 1, seed = 1 }) {
   const borderColor = getColor(color);
   const bgColor = getColor(background);
   const id = generateId('callout');
@@ -561,9 +722,10 @@ function createCallout({ x, y, text, color = 'primary', background = 'white', wi
   const fontFamily = getSketchAwareFontFamily(font, handwriting, sketchOn);
 
   const padding = 14;
-  const lineHeight = fontSize * 1.5;
-  const lines = text.split('\n');
-  const contentWidth = Math.max(0, ...lines.map((line) => getTextContentWidthPx(line, fontSize)));
+  // A fixed width doubles as the wrap width; maxWidth wraps without fixing the
+  // box. Neither set -> no wrapping, matching pre-wrap output byte for byte.
+  const wrapWidth = width ? width - padding * 2 : (maxWidth ? maxWidth - padding * 2 : null);
+  const { lines, width: contentWidth, lineHeight } = measureTextBlock(text, fontSize, { maxWidth: wrapWidth, lineHeightRatio: 1.5 });
   const textWidth = width || contentWidth + padding * 2;
   const textHeight = lines.length * lineHeight + padding * 2;
 
@@ -713,16 +875,47 @@ function createCircle({ x, y, radius = 30, color = 'red', strokeWidth = 4, fill 
   return { defs: defs.join('\n'), element };
 }
 
-function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight = '600', background = 'white', padding = 10, cornerRadius = 8, shadow = true, handwriting = null, font = null, sketch = false, roughness = 1, seed = 1 }) {
+function createEllipse({ x, y, rx = null, ry = null, width = null, height = null, color = 'red', strokeWidth = 4, fill = 'none', style = 'solid', shadow = false, sketch = false, roughness = 1, seed = 1, fillStyle = 'hachure' }) {
+  const c = getColor(color);
+  const fillColor = fill === 'none' ? 'none' : getColor(fill);
+  // width/height are accepted as a convenience for callers that measured a UI
+  // region as a box; rx/ry win when both are given.
+  const radiusX = typeof rx === 'number' && rx > 0 ? rx : (typeof width === 'number' && width > 0 ? width / 2 : 40);
+  const radiusY = typeof ry === 'number' && ry > 0 ? ry : (typeof height === 'number' && height > 0 ? height / 2 : 25);
+
+  if (sketch === true) {
+    const element = sketchShape('ellipse', [x, y, radiusX * 2, radiusY * 2], sketchOptions({
+      stroke: c, strokeWidth, fill: fillColor, fillStyle, roughness, seed, dashed: style === 'dashed'
+    }));
+    if (element) return { defs: '', element };
+  }
+
+  const id = generateId('ellipse');
+  const defs = [];
+
+  if (shadow) {
+    defs.push(createDropShadow(`${id}-shadow`));
+  }
+
+  const dashArray = style === 'dashed' ? 'stroke-dasharray="8,4"' : '';
+  const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
+
+  const element = `
+    <ellipse cx="${x}" cy="${y}" rx="${radiusX}" ry="${radiusY}"
+            fill="${fillColor}" stroke="${c}" stroke-width="${strokeWidth}" ${dashArray} ${filterAttr}/>
+  `;
+
+  return { defs: defs.join('\n'), element };
+}
+
+function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight = '600', background = 'white', padding = 10, cornerRadius = 8, shadow = true, maxWidth = null, handwriting = null, font = null, sketch = false, roughness = 1, seed = 1 }) {
   const textColor = getColor(color);
   const id = generateId('label');
   const defs = [];
   const elements = [];
   const fontFamily = getSketchAwareFontFamily(font, handwriting, sketch);
 
-  const lines = text.split('\n');
-  const lineHeight = fontSize * 1.3;
-  const textWidth = Math.max(0, ...lines.map((line) => getTextContentWidthPx(line, fontSize)));
+  const { lines, width: textWidth, lineHeight } = measureTextBlock(text, fontSize, { maxWidth, lineHeightRatio: 1.3 });
   const textHeight = lines.length * lineHeight;
 
   // Sketch mode drops the drop shadow — Excalidraw-style output is flat.
@@ -746,11 +939,15 @@ function createLabel({ x, y, text, color = 'darkGray', fontSize = 18, fontWeight
     `);
   }
 
+  // The background box sits above y (y is a baseline), so the text block is
+  // bottom-anchored: the LAST line's baseline lands on y and earlier lines
+  // stack upward inside the box. Single-line output is unchanged.
+  const firstBaseline = y - (lines.length - 1) * lineHeight;
   const textElements = lines.map((line, index) =>
     `<tspan x="${x}" dy="${index === 0 ? 0 : lineHeight}">${escapeXml(line)}</tspan>`
   ).join('');
   elements.push(`
-    <text x="${x}" y="${y}" fill="${textColor}" font-size="${fontSize}"
+    <text x="${x}" y="${firstBaseline}" fill="${textColor}" font-size="${fontSize}"
           font-weight="${escapeXml(fontWeight)}" font-family="${fontFamily}">${textElements}</text>
   `);
 
@@ -977,6 +1174,11 @@ function createMeasure({ from, to, text, color = 'red', fontSize = 16, strokeWid
   const elements = [];
   const [x1, y1] = from;
   const [x2, y2] = to;
+  // Fallback for direct/preview callers; the runtime pre-fills text with the
+  // DPR-corrected distance before rendering, which takes precedence here.
+  if (text === undefined || text === null || text === '') {
+    text = `${Math.round(Math.hypot(x2 - x1, y2 - y1))} px`;
+  }
   const sketchOn = sketch === true && getRoughGenerator() !== null;
 
   if (shadow && !sketchOn) {
@@ -1048,12 +1250,11 @@ function createMeasure({ from, to, text, color = 'red', fontSize = 16, strokeWid
 // box to know how much canvas a leadout occupies.
 const LEADOUT_LINE_HEIGHT = 1.3;
 
-function getLeadoutChipSize(text, fontSize) {
-  const lines = String(text).split('\n');
+function getLeadoutChipSize(text, fontSize, maxWidth = null) {
   const padX = Math.round(fontSize * 0.75);
   const padY = Math.round(fontSize * 0.4);
-  const lineHeight = fontSize * LEADOUT_LINE_HEIGHT;
-  const contentWidth = Math.max(0, ...lines.map((line) => getTextContentWidthPx(line, fontSize)));
+  const wrapWidth = maxWidth ? maxWidth - padX * 2 : null;
+  const { lines, width: contentWidth, lineHeight } = measureTextBlock(String(text), fontSize, { maxWidth: wrapWidth, lineHeightRatio: LEADOUT_LINE_HEIGHT });
   return {
     lines,
     padX,
@@ -1090,7 +1291,7 @@ function leadoutPointsToPath(points) {
   return 'M' + points.map(([px, py]) => `${px},${py}`).join(' L');
 }
 
-function createLeadout({ target, anchor, text, color = 'red', fontSize = 16, strokeWidth = null, shadow = true, variant = 'soft', lineStyle = 'elbow', halo = true, font = null, handwriting = null, sketch = false, roughness = 1, seed = 1 }) {
+function createLeadout({ target, anchor, text, color = 'red', fontSize = 16, strokeWidth = null, shadow = true, variant = 'soft', lineStyle = 'elbow', halo = true, maxWidth = null, font = null, handwriting = null, sketch = false, roughness = 1, seed = 1 }) {
   const c = getColor(color);
   const id = generateId('leadout');
   const defs = [];
@@ -1106,7 +1307,7 @@ function createLeadout({ target, anchor, text, color = 'red', fontSize = 16, str
     : Math.max(2, fontSize * 0.15);
 
   // Label chip centred on the anchor.
-  const chip = getLeadoutChipSize(text, fontSize);
+  const chip = getLeadoutChipSize(text, fontSize, maxWidth);
   const boxX = ax - chip.width / 2;
   const boxY = ay - chip.height / 2;
 
@@ -1431,7 +1632,7 @@ function adjustColor(hex, amount) {
 const NUMERIC_ANNOTATION_FIELDS = [
   'x', 'y', 'width', 'height', 'radius', 'size', 'fontSize', 'strokeWidth',
   'cornerRadius', 'opacity', 'intensity', 'curve', 'padding', 'zoom', 'blockSize',
-  'roughness', 'seed'
+  'roughness', 'seed', 'maxWidth', 'rx', 'ry'
 ];
 
 function sanitizeNumericFields(annotation) {
@@ -1459,6 +1660,30 @@ function sanitizeNumericFields(annotation) {
  *
  * @returns {{defs: string[], elements: string[]}}
  */
+const MARKER_TYPES = new Set(['marker', 'number']);
+
+/**
+ * Fill in missing marker numbers, ordered-list style: an explicit number sets
+ * the cursor, an omitted one takes the next value, so [auto, auto, 10, auto]
+ * renders 1, 2, 10, 11. Idempotent and non-mutating; runtime calls it again
+ * after clamping so alt text and aria labels see the same numbers.
+ */
+function assignMarkerNumbers(annotations) {
+  if (!Array.isArray(annotations)) return annotations;
+  let next = 1;
+  let changed = false;
+  const out = annotations.map((annotation) => {
+    if (!annotation || typeof annotation !== 'object' || !MARKER_TYPES.has(annotation.type)) return annotation;
+    if (typeof annotation.number === 'number' && isFinite(annotation.number)) {
+      next = annotation.number + 1;
+      return annotation;
+    }
+    changed = true;
+    return { ...annotation, number: next++ };
+  });
+  return changed ? out : annotations;
+}
+
 function buildSvgParts(annotations, options = {}) {
   if (typeof options === 'string') {
     options = { theme: options };
@@ -1472,6 +1697,8 @@ function buildSvgParts(annotations, options = {}) {
   if (!Array.isArray(annotations)) {
     throw invalidParameter('Annotations must be an array', 'annotations');
   }
+
+  annotations = assignMarkerNumbers(annotations);
 
   const defs = [];
   const elements = [];
@@ -1533,6 +1760,9 @@ function buildSvgParts(annotations, options = {}) {
         break;
       case 'circle':
         result = createCircle(mergedAnn);
+        break;
+      case 'ellipse':
+        result = createEllipse(mergedAnn);
         break;
       case 'label':
       case 'text':
@@ -1616,6 +1846,8 @@ const api = {
   LINE_HEIGHT_RATIO,
   getSizePreset,
   getTextContentWidthPx,
+  wrapTextLines,
+  measureTextBlock,
   escapeXml,
   getColor,
   getFontFamily,
@@ -1632,6 +1864,7 @@ const api = {
   createCallout,
   createRect,
   createCircle,
+  createEllipse,
   createLabel,
   createHighlight,
   createBlur,
@@ -1649,6 +1882,7 @@ const api = {
   createMagnifier,
   adjustColor,
   tintColor,
+  assignMarkerNumbers,
   buildSvgParts,
   buildSvg
 };

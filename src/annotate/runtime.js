@@ -20,6 +20,8 @@ const {
   LINE_HEIGHT_RATIO,
   getSizePreset,
   getTextContentWidthPx,
+  measureTextBlock,
+  assignMarkerNumbers,
   getLeadoutChipSize,
   escapeXml,
   buildSvg,
@@ -99,8 +101,30 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
   validateAnnotations(annotations);
 
   const metadata = await sharp(inputPath).metadata();
-  const { width, height } = metadata;
   checkImageSize(metadata);
+
+  const devicePixelRatio = options.devicePixelRatio || 1;
+  // Crop runs before everything else: the output canvas is the cropped region,
+  // and every later stage (padding, clamping, redaction, magnifier sampling)
+  // works in cropped-image coordinates. Annotation coordinates stay relative
+  // to the ORIGINAL image - the pipeline shifts them - so callers can reuse
+  // Playwright/DOM coordinates without doing their own subtraction.
+  const crop = normalizeCrop(options.crop, metadata.width, metadata.height, devicePixelRatio);
+  let baseSource = inputPath;
+  let width = metadata.width;
+  let height = metadata.height;
+  if (crop) {
+    try {
+      baseSource = await sharp(inputPath)
+        .extract({ left: crop.left, top: crop.top, width: crop.width, height: crop.height })
+        .png()
+        .toBuffer();
+    } catch (err) {
+      throw new ImageProcessingError(`Failed to crop input image: ${err.message}`, err);
+    }
+    width = crop.width;
+    height = crop.height;
+  }
 
   const inputDir = path.dirname(inputPath);
   const config = options.config || loadConfig(inputDir);
@@ -111,16 +135,26 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
   }
 
   const redactPatterns = options.redactPatterns;
-  const devicePixelRatio = options.devicePixelRatio || 1;
-  const scaledAnnotations = devicePixelRatio !== 1
+  const dprScaledAnnotations = devicePixelRatio !== 1
     ? annotations.map((annotation) => scaleAnnotationCoords(annotation, devicePixelRatio))
     : annotations;
+  const scaledAnnotations = crop && (crop.left || crop.top)
+    ? dprScaledAnnotations.map((annotation) => offsetAnnotationCoords(annotation, -crop.left, -crop.top))
+    : dprScaledAnnotations;
+  // measure annotations with no text get the measured distance, expressed in
+  // the caller's (CSS logical pixel) coordinate space - hence the DPR divide.
+  const measuredAnnotations = scaledAnnotations.map((annotation) => {
+    if (annotation.type !== 'measure' || !Array.isArray(annotation.from) || !Array.isArray(annotation.to)) return annotation;
+    if (annotation.text !== undefined && annotation.text !== null && annotation.text !== '') return annotation;
+    const distance = Math.hypot(annotation.to[0] - annotation.from[0], annotation.to[1] - annotation.from[1]) / devicePixelRatio;
+    return { ...annotation, text: `${Math.round(distance)} px` };
+  });
   const padding = normalizeCanvasPadding(options.canvasPadding);
   const extendedWidth = width + padding.left + padding.right;
   const extendedHeight = height + padding.top + padding.bottom;
   const offsetAnnotations = padding.left || padding.top
-    ? scaledAnnotations.map((annotation) => offsetAnnotationCoords(annotation, padding.left, padding.top))
-    : scaledAnnotations;
+    ? measuredAnnotations.map((annotation) => offsetAnnotationCoords(annotation, padding.left, padding.top))
+    : measuredAnnotations;
 
   const { annotations: clampedAnnotations, warnings: clampWarnings } = clampAnnotations(offsetAnnotations, extendedWidth, extendedHeight);
 
@@ -198,6 +232,11 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
     });
   }
 
+  // Assign auto-incremented marker numbers here (buildSvg would do it again,
+  // idempotently) so alt text, aria labels, and collision boxes all see the
+  // numbers that actually get drawn.
+  validAnnotations = assignMarkerNumbers(validAnnotations);
+
   const collisionWarnings = detectCollisions(validAnnotations, sizePreset);
   const warnings = [...clampWarnings, ...collisionWarnings, ...redactionWarnings];
   const svg = buildSvg(extendedWidth, extendedHeight, validAnnotations, enhancedOptions);
@@ -225,6 +264,7 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
       theme: enhancedOptions.theme,
       devicePixelRatio,
       canvasPadding: padding,
+      crop: crop || undefined,
       format: outputFormat,
       outputFormat,
       quality: undefined,
@@ -241,7 +281,7 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
     const solidRedactions = redactAnnotations.filter((a) => getRedactMode(a) === 'solid');
     const softRedactions = redactAnnotations.filter((a) => getRedactMode(a) !== 'solid');
     const softLayers = softRedactions.length > 0
-      ? await buildSoftRedactionLayers(softRedactions, inputPath, { padding, sourceWidth: width, sourceHeight: height })
+      ? await buildSoftRedactionLayers(softRedactions, baseSource, { padding, sourceWidth: width, sourceHeight: height })
       : [];
 
     const hasPadding = !!(padding.top || padding.right || padding.bottom || padding.left);
@@ -263,7 +303,7 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
       // anchored elsewhere would zoom the original pixels underneath it. The
       // final composite draws the solid rectangles again on top; same colour,
       // so the double application is idempotent.
-      let intermediate = sharp(inputPath);
+      let intermediate = sharp(baseSource);
       if (hasPadding) intermediate = intermediate.extend(extendOptions);
       const solidLayers = buildSolidRedactionLayers(solidRedactions, extendedWidth, extendedHeight);
       if (softLayers.length > 0 || solidLayers.length > 0) {
@@ -283,13 +323,13 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
     } else {
       // Sampling from the unpadded source: the offsets convert padded-canvas
       // coordinates back into source space.
-      magnifierLayers = await buildMagnifierLayers(magnifierAnnotations, inputPath, {
+      magnifierLayers = await buildMagnifierLayers(magnifierAnnotations, baseSource, {
         offsetLeft: padding.left,
         offsetTop: padding.top,
         boundsWidth: width,
         boundsHeight: height
       });
-      pipeline = sharp(inputPath);
+      pipeline = sharp(baseSource);
       if (hasPadding) pipeline = pipeline.extend(extendOptions);
       baseLayers = softLayers;
     }
@@ -327,6 +367,7 @@ async function annotateImage(inputPath, outputPath, annotations, options = {}) {
     theme: enhancedOptions.theme,
     devicePixelRatio,
     canvasPadding: padding,
+    crop: crop || undefined,
     format: outputFormat,
     outputFormat,
     quality,
@@ -505,6 +546,8 @@ function scaleAnnotationCoords(annotation, dpr) {
   if (scaled.width !== undefined) scaled.width = scaleValue(scaled.width);
   if (scaled.height !== undefined) scaled.height = scaleValue(scaled.height);
   if (scaled.radius !== undefined) scaled.radius = scaleValue(scaled.radius);
+  if (scaled.rx !== undefined) scaled.rx = scaleValue(scaled.rx);
+  if (scaled.ry !== undefined) scaled.ry = scaleValue(scaled.ry);
   if (Array.isArray(scaled.from)) scaled.from = scaled.from.map(scaleValue);
   if (Array.isArray(scaled.to)) scaled.to = scaled.to.map(scaleValue);
   if (Array.isArray(scaled.target)) scaled.target = scaled.target.map(scaleValue);
@@ -534,6 +577,8 @@ function remapAnnotation(annotation, scaleX, scaleY) {
   if (typeof scaled.width === 'number') scaled.width = scaleNum(scaled.width, scaleX);
   if (typeof scaled.height === 'number') scaled.height = scaleNum(scaled.height, scaleY);
   if (typeof scaled.radius === 'number') scaled.radius = scaleNum(scaled.radius, Math.min(scaleX, scaleY));
+  if (typeof scaled.rx === 'number') scaled.rx = scaleNum(scaled.rx, scaleX);
+  if (typeof scaled.ry === 'number') scaled.ry = scaleNum(scaled.ry, scaleY);
   for (const field of POINT_FIELDS) {
     if (scaled[field]) scaled[field] = scalePoint(scaled[field]);
   }
@@ -574,6 +619,12 @@ function estimateDimensionsFromAnnotations(annotations) {
     if (typeof annotation.radius === 'number' && isFinite(annotation.radius)) {
       consider((annotation.x || 0) + annotation.radius, (annotation.y || 0) + annotation.radius);
     }
+    if (typeof annotation.rx === 'number' && isFinite(annotation.rx)) {
+      consider((annotation.x || 0) + annotation.rx, undefined);
+    }
+    if (typeof annotation.ry === 'number' && isFinite(annotation.ry)) {
+      consider(undefined, (annotation.y || 0) + annotation.ry);
+    }
   }
 
   if (!found || maxX === 0 || maxY === 0) return null;
@@ -592,6 +643,43 @@ function normalizePaddingSide(value, side) {
     throw new InvalidParameterError(`canvas padding "${side}" must not be negative, received ${number}`, 'canvas_padding');
   }
   return Math.round(number);
+}
+
+/**
+ * Validate the top-level crop option and convert it from CSS logical pixels
+ * into device pixels intersected with the source image. Returns null when no
+ * crop was requested; throws when the region is unusable.
+ */
+function normalizeCrop(crop, imageWidth, imageHeight, dpr = 1) {
+  if (crop === undefined || crop === null) return null;
+  if (typeof crop !== 'object' || Array.isArray(crop)) {
+    throw new InvalidParameterError('crop must be an object with numeric x, y, width, and height', 'crop');
+  }
+  const num = (value, name) => {
+    const n = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(n)) {
+      throw new InvalidParameterError(`crop.${name} must be a finite number, received ${JSON.stringify(value)}`, 'crop');
+    }
+    return n;
+  };
+  const x = num(crop.x, 'x') * dpr;
+  const y = num(crop.y, 'y') * dpr;
+  const w = num(crop.width, 'width') * dpr;
+  const h = num(crop.height, 'height') * dpr;
+  if (w <= 0 || h <= 0) {
+    throw new InvalidParameterError('crop width and height must be positive', 'crop');
+  }
+  const left = Math.min(Math.max(0, Math.round(x)), imageWidth);
+  const top = Math.min(Math.max(0, Math.round(y)), imageHeight);
+  const right = Math.min(imageWidth, Math.round(x + w));
+  const bottom = Math.min(imageHeight, Math.round(y + h));
+  if (right - left < 1 || bottom - top < 1) {
+    throw new InvalidParameterError(
+      `crop region (x=${crop.x}, y=${crop.y}, ${crop.width}x${crop.height}) has no overlap with the ${imageWidth}x${imageHeight} source image`,
+      'crop'
+    );
+  }
+  return { left, top, width: right - left, height: bottom - top };
 }
 
 function normalizeCanvasPadding(canvasPadding) {
@@ -719,6 +807,15 @@ function clampAnnotations(annotations, imageWidth, imageHeight) {
       const maxRadius = Math.min(imageWidth, imageHeight) / 2;
       clamped.radius = clampValue('radius', 1, maxRadius, clamped.radius, DROP);
     }
+    if (clamped.rx !== undefined) {
+      clamped.rx = clampValue('rx', 1, imageWidth / 2, clamped.rx, DROP);
+    }
+    if (clamped.ry !== undefined) {
+      clamped.ry = clampValue('ry', 1, imageHeight / 2, clamped.ry, DROP);
+    }
+    if (clamped.maxWidth !== undefined) {
+      clamped.maxWidth = clampValue('maxWidth', 1, Infinity, clamped.maxWidth, DROP);
+    }
 
     if (clamped.from && Array.isArray(clamped.from)) {
       if (clamped.from[0] !== undefined) {
@@ -798,9 +895,13 @@ function getBoundingBox(annotation, sizePreset) {
       const fontSize = annotation.fontSize || preset.fontSize || 18;
       const padding = DEFAULT_PADDING;
       const pointerSize = 12;
+      // Mirror createCallout's wrap rule: width fixes the box and the wrap
+      // width; maxWidth wraps without fixing the box.
+      const wrapWidth = (annotation.width || 0) > 0
+        ? annotation.width - padding * 2
+        : ((annotation.maxWidth || 0) > 0 ? annotation.maxWidth - padding * 2 : null);
+      const { lines, width: contentWidth } = measureTextBlock(String(annotation.text || ''), fontSize, { maxWidth: wrapWidth, lineHeightRatio: LINE_HEIGHT_RATIO });
       const lineHeight = fontSize * LINE_HEIGHT_RATIO;
-      const lines = String(annotation.text || '').split('\n');
-      const contentWidth = Math.max(0, ...lines.map((line) => getTextContentWidthPx(line, fontSize)));
       const textWidth = (annotation.width || 0) > 0 ? annotation.width : contentWidth + padding * 2;
       const textHeight = lines.length * lineHeight + padding * 2;
       const pointer = annotation.pointer || 'bottom';
@@ -844,12 +945,16 @@ function getBoundingBox(annotation, sizePreset) {
       const radius = annotation.radius || 30;
       return { x: annotation.x - radius, y: annotation.y - radius, w: radius * 2, h: radius * 2 };
     }
+    case 'ellipse': {
+      // Mirrors createEllipse's rx/ry-over-width/height precedence and defaults.
+      const rx = annotation.rx > 0 ? annotation.rx : (annotation.width > 0 ? annotation.width / 2 : 40);
+      const ry = annotation.ry > 0 ? annotation.ry : (annotation.height > 0 ? annotation.height / 2 : 25);
+      return { x: annotation.x - rx, y: annotation.y - ry, w: rx * 2, h: ry * 2 };
+    }
     case 'label': {
       const fontSize = annotation.fontSize || preset.fontSize || 18;
       const padding = annotation.padding || 10;
-      const lines = String(annotation.text || '').split('\n');
-      const lineHeight = fontSize * 1.3;
-      const textWidth = Math.max(0, ...lines.map((line) => getTextContentWidthPx(line, fontSize)));
+      const { lines, width: textWidth, lineHeight } = measureTextBlock(String(annotation.text || ''), fontSize, { maxWidth: annotation.maxWidth || null, lineHeightRatio: 1.3 });
       const textHeight = lines.length * lineHeight;
       if (annotation.background) {
         return {
@@ -900,7 +1005,7 @@ function getBoundingBox(annotation, sizePreset) {
       const [ax, ay] = annotation.anchor || [0, 0];
       const fontSize = annotation.fontSize || preset.fontSize || 16;
       const chip = annotation.text !== undefined
-        ? getLeadoutChipSize(annotation.text, fontSize)
+        ? getLeadoutChipSize(annotation.text, fontSize, annotation.maxWidth || null)
         : { width: 100, height: fontSize * 1.4 + 10 };
       // 7 ≈ target dot radius plus its white halo ring.
       const dotPad = 7;
@@ -998,6 +1103,8 @@ function getAnnotationAriaLabel(annotation, index) {
       return `${annotation.type} region ${position}`;
     case 'circle':
       return `Circle ${position}`;
+    case 'ellipse':
+      return `Ellipse ${position}`;
     case 'connector':
       return `Connector ${position}`;
     case 'icon':
@@ -1082,6 +1189,16 @@ function validateAnnotation(annotation) {
       throw new ValidationError('spotlight annotations require x and y coordinates');
     }
   }
+  if (annotation.type === 'ellipse') {
+    if (typeof annotation.x !== 'number' || typeof annotation.y !== 'number') {
+      throw new ValidationError('ellipse annotations require x and y center coordinates');
+    }
+    const hasRadii = typeof annotation.rx === 'number' || typeof annotation.ry === 'number';
+    const hasBox = typeof annotation.width === 'number' || typeof annotation.height === 'number';
+    if (!hasRadii && !hasBox) {
+      throw new ValidationError('ellipse annotations require rx/ry radii (or width/height)');
+    }
+  }
   // A redaction region with an implicit position or size is dangerous - it
   // could silently cover the wrong thing. All four fields are mandatory
   // (breaking change for legacy blur calls that relied on 100x60 defaults).
@@ -1130,6 +1247,7 @@ module.exports = {
   remapAnnotation,
   estimateDimensionsFromAnnotations,
   normalizeCanvasPadding,
+  normalizeCrop,
   offsetAnnotationCoords,
   generateAltText,
   setIdGenerator,

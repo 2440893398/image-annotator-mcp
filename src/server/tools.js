@@ -4,28 +4,32 @@ const tools = [
     description: `Add professional annotations to a screenshot image.
 
 Annotation types available:
-• marker - Numbered circles (1, 2, 3...) with gradient and shadow
-• arrow - Straight arrows with customizable heads
+• marker - Numbered circles (1, 2, 3...) with gradient and shadow; "number" may be omitted and auto-increments in array order
+• arrow - Straight or elbow arrows ("lineStyle") with heads at either or both ends ("heads")
 • curved-arrow - Smooth curved arrows
-• callout - Text boxes with pointers (speech bubbles)
+• callout - Text boxes with pointers (speech bubbles); wraps automatically when "width" or "maxWidth" is set
 • rect - Rectangle highlights
 • circle - Circle highlights
+• ellipse - Ellipse outline around a center point (rx/ry radii or width/height box) — use instead of circle for wide/flat UI regions
 • label - Text labels with optional backgrounds
 • highlight - Semi-transparent overlays
 • redact - Cover a region irreversibly (mode "solid", default). Modes "pixelate"/"blur" are REVERSIBLE visual de-emphasis only — never use them for sensitive content
 • blur - Deprecated alias for redact with mode "blur" (reversible de-emphasis, not privacy protection)
 • connector - Dashed lines between elements
 • icon - Icon badges (check, x, warning, info, question)
-• measure - Dimension measurement lines with tick marks and centered text
+• measure - Dimension measurement lines with tick marks and centered text; omit "text" to auto-show the measured px distance
 • leadout - Leader line callout: ringed dot at target, 45° elbow line, filled label chip at anchor
 • bracket-label - Bracket annotation grouping an area with a label
 • spotlight - Dark overlay with cutout to focus on a specific area
+• magnifier - Circular zoomed-in patch of the target area placed at the anchor
 
 Quick reference for common tasks:
 • Redact sensitive info: {"type":"redact","x":100,"y":100,"width":200,"height":50,"label":"REDACTED"}
 • Highlight area: {"type":"highlight","x":50,"y":50,"width":300,"height":100,"color":"yellow","opacity":0.35}
 • Speech bubble: {"type":"callout","x":200,"y":200,"text":"Your note here","pointer":"bottom"}
-• Measurement: {"type":"measure","from":[100,200],"to":[300,200],"text":"76CM"}
+• Circle a wide element: {"type":"ellipse","x":200,"y":150,"rx":90,"ry":30}
+• Two-way elbow arrow: {"type":"arrow","from":[100,100],"to":[300,200],"heads":"both","lineStyle":"elbow"}
+• Measurement (auto distance): {"type":"measure","from":[100,200],"to":[300,200]}
 • Leader line: {"type":"leadout","target":[150,150],"anchor":[300,100],"text":"Steel material"}
 • Bracket: {"type":"bracket-label","from":[50,100],"to":[50,300],"direction":"right","text":"Group A"}
 • Spotlight: {"type":"spotlight","x":200,"y":200,"radius":80}
@@ -96,6 +100,18 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
           type: 'boolean',
           description: 'Render every annotation in a hand-drawn Excalidraw-like style (rough.js): wobbly double strokes, hachure fills, handwriting fonts. Redact/blur regions are exempt and always stay crisp. Individual annotations can opt out with "sketch": false.'
         },
+        crop: {
+          type: 'object',
+          description: 'Crop the screenshot to this region before annotating. Coordinates are CSS logical pixels relative to the ORIGINAL image (same space as annotation coordinates and device_pixel_ratio); annotation coordinates are shifted automatically, so coordinates from Playwright/DOM can be reused unchanged. The region is intersected with the image; no overlap is an error.',
+          properties: {
+            x: { type: 'number', minimum: 0, description: 'Left edge of the crop region in the original image.' },
+            y: { type: 'number', minimum: 0, description: 'Top edge of the crop region in the original image.' },
+            width: { type: 'number', exclusiveMinimum: 0 },
+            height: { type: 'number', exclusiveMinimum: 0 }
+          },
+          required: ['x', 'y', 'width', 'height'],
+          additionalProperties: false
+        },
         redact_patterns: {
           type: 'array',
           items: { type: 'string' },
@@ -109,7 +125,7 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
             properties: {
               type: {
                 type: 'string',
-                enum: ['marker', 'arrow', 'curved-arrow', 'callout', 'rect', 'circle', 'label', 'highlight', 'redact', 'blur', 'connector', 'icon', 'measure', 'leadout', 'bracket-label', 'spotlight', 'magnifier'],
+                enum: ['marker', 'arrow', 'curved-arrow', 'callout', 'rect', 'circle', 'ellipse', 'label', 'highlight', 'redact', 'blur', 'connector', 'icon', 'measure', 'leadout', 'bracket-label', 'spotlight', 'magnifier'],
                 description: 'Annotation type'
               },
               mode: {
@@ -121,26 +137,33 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
               label: { type: 'string', description: 'Optional text drawn centered on a solid redact rectangle, e.g. "REDACTED".' },
               x: { type: 'number', minimum: 0, description: 'X coordinate of the annotation anchor in image pixels.' },
               y: { type: 'number', minimum: 0, description: 'Y coordinate of the annotation anchor in image pixels.' },
-              number: { type: 'number', minimum: 1, description: 'Number for markers' },
-              text: { type: 'string', description: 'Text for labels/callouts' },
+              number: { type: 'number', minimum: 1, description: 'Number for markers. May be omitted: markers auto-increment from 1 in array order, and an explicit number sets the cursor for the ones after it ([auto, auto, 10, auto] renders 1, 2, 10, 11).' },
+              text: { type: 'string', description: 'Text for labels/callouts. Use \\n for manual line breaks; set maxWidth (or callout width) for automatic wrapping. For measure, omit to auto-display the measured distance in logical px.' },
+              maxWidth: { type: 'number', minimum: 1, description: 'Maximum text width in image pixels for callout/label/leadout; longer text wraps automatically (CJK breaks per character, latin at word boundaries). Unset = no wrapping.' },
               from: { type: 'array', items: { type: 'number' }, description: '[x, y] start point' },
               to: { type: 'array', items: { type: 'number' }, description: '[x, y] end point' },
               target: { type: 'array', items: { type: 'number' }, description: '[x, y] target point for leadout annotations' },
               anchor: { type: 'array', items: { type: 'number' }, description: '[x, y] anchor point for leadout/magnifier text placement' },
               direction: { type: 'string', enum: ['top', 'bottom', 'left', 'right'], description: 'Direction for bracket-label or callout pointer' },
               zoom: { type: 'number', minimum: 1, maximum: 10, description: 'Zoom factor for magnifier (default: 2)' },
-              width: { type: 'number', minimum: 0, description: 'Width of the annotation in image pixels. Use for rectangles, highlights, redact regions, and other box-based shapes. Required for redact/blur.' },
+              width: { type: 'number', minimum: 0, description: 'Width of the annotation in image pixels. Use for rectangles, highlights, redact regions, and other box-based shapes. Required for redact/blur. For callout it fixes the bubble width and wraps the text to fit.' },
               height: { type: 'number', minimum: 0, description: 'Height of the annotation in image pixels. Use for rectangles, highlights, redact regions, and other box-based shapes. Required for redact/blur.' },
               intensity: { type: 'number', minimum: 0.3, description: 'Gaussian sigma for redact mode "blur" (default: 12). Blur is reversible; do not use it for sensitive content.' },
               radius: { type: 'number', minimum: 0, description: 'Radius in image pixels for circular annotations.' },
+              rx: { type: 'number', minimum: 1, description: 'Horizontal radius for ellipse (x/y is the CENTER). Preferred over width/height.' },
+              ry: { type: 'number', minimum: 1, description: 'Vertical radius for ellipse (x/y is the CENTER). Preferred over width/height.' },
               color: { type: 'string' },
               background: { type: 'string' },
+              fill: { type: 'string', description: 'Fill color for rect/circle/ellipse/polygon shapes, or "none" (default) for outline only.' },
+              fillStyle: { type: 'string', enum: ['hachure', 'solid', 'zigzag', 'cross-hatch', 'dots', 'dashed', 'zigzag-line'], description: 'Sketch-mode fill texture for filled shapes (default: hachure, like Excalidraw).' },
               size: { type: 'number', minimum: 0, description: 'Overall size for markers or icons in image pixels.' },
               fontSize: { type: 'number', minimum: 0, description: 'Text size in image pixels for labels and callouts.' },
               strokeWidth: { type: 'number', minimum: 0, description: 'Line thickness in image pixels for arrows, outlines, and connectors.' },
-              style: { type: 'string', enum: ['filled', 'outline', 'badge', 'solid', 'dashed'] },
+              style: { type: 'string', enum: ['filled', 'outline', 'badge', 'solid', 'dashed'], description: 'marker: filled/outline/badge. Shapes and lines: solid/dashed.' },
+              headStyle: { type: 'string', enum: ['filled', 'open'], description: 'Arrowhead shape for arrow/curved-arrow: "filled" (default) solid triangle, "open" V-shaped outline.' },
+              heads: { type: 'string', enum: ['end', 'start', 'both', 'none'], description: 'Which ends of an arrow get a head (default: "end"). "both" makes a double-headed arrow for ranges/relationships; "none" is a plain shaft.' },
               variant: { type: 'string', enum: ['soft', 'filled', 'outline'], description: 'Leadout label chip style. "soft" (default): light tint of the accent with accent border and dark text — calm and readable. "filled": solid accent chip with auto-contrast text for maximum emphasis. "outline": white chip with accent border.' },
-              lineStyle: { type: 'string', enum: ['elbow', 'straight'], description: 'Leadout leader routing. "elbow" (default) leaves the target at 45° then runs axis-aligned into the label edge; "straight" connects directly.' },
+              lineStyle: { type: 'string', enum: ['elbow', 'straight'], description: 'Leader/shaft routing for leadout and arrow. "elbow" (leadout default) leaves the start at 45° then runs axis-aligned; "straight" (arrow default) connects directly. Use elbow arrows to route around content.' },
               halo: { type: 'boolean', description: 'Leadout only: draw a white casing under the leader line and target dot so they stay legible over busy content (default: true).' },
               pointer: { type: 'string', enum: ['top', 'bottom', 'left', 'right'] },
               icon: { type: 'string', enum: ['check', 'x', 'warning', 'info', 'question'] },
@@ -152,7 +175,10 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
               handwriting: { type: 'boolean', description: 'Use the handwriting font stack for text (implied by sketch mode).' },
               curve: { type: 'number', minimum: -500, maximum: 500, description: 'Curve strength for curved arrows. Negative values bend one direction and positive values bend the other.' },
               cornerRadius: { type: 'number', minimum: 0, description: 'Corner radius in image pixels for rounded rectangles or labels.' },
-              opacity: { type: 'number', minimum: 0, maximum: 1, description: 'Transparency from 0 for fully transparent to 1 for fully opaque.' }
+              opacity: { type: 'number', minimum: 0, maximum: 1, description: 'Transparency from 0 for fully transparent to 1 for fully opaque.' },
+              padding: { type: 'number', minimum: 0, description: 'Inner padding in image pixels between label text and its background box (default: 10).' },
+              fontWeight: { type: 'string', description: 'CSS font-weight for label text (default: "600").' },
+              borderColor: { type: 'string', description: 'Ring color for the magnifier lens (default: primary blue).' }
             },
             required: ['type']
           }
@@ -250,7 +276,12 @@ device_pixel_ratio scales both the source step coordinates and the built-in labe
         },
         theme: {
           type: 'string',
-          enum: ['documentation', 'tutorial', 'bugReport', 'highlight']
+          enum: ['documentation', 'tutorial', 'bugReport', 'highlight', 'sketch'],
+          description: 'Preset theme. "sketch" renders the whole guide hand-drawn (Excalidraw-style).'
+        },
+        sketch: {
+          type: 'boolean',
+          description: 'Render the guide in a hand-drawn Excalidraw-like style (same as theme "sketch").'
         }
       },
       required: ['input_path', 'steps']

@@ -12,8 +12,8 @@ const { buildStepGuideAnnotations } = require('./step-guide');
 
 async function main() {
   const args = minimist(process.argv.slice(2), {
-    string: ['annotations', 'theme', 'output-format', 'redact-patterns'],
-    boolean: ['help', 'h'],
+    string: ['annotations', 'theme', 'output-format', 'redact-patterns', 'crop'],
+    boolean: ['help', 'h', 'sketch'],
     alias: { h: 'help', a: 'annotations', t: 'theme' }
   });
 
@@ -28,11 +28,15 @@ Usage: node annotate.js <input> <output> [options]
 
 Options:
   --annotations, -a       JSON array of annotations (required for annotate mode)
-  --theme, -t             Theme: documentation|tutorial|bugReport|highlight
+  --theme, -t             Theme: documentation|tutorial|bugReport|highlight|sketch
+  --sketch                Render every annotation in hand-drawn Excalidraw style
   --output-format         Output format: png, jpeg, webp, avif, svg (default: png)
   --quality               JPEG/WebP quality 1-100
   --device-pixel-ratio    Scale factor for Retina/HiDPI coordinates (e.g. 2)
   --canvas-padding        Extra canvas padding in pixels
+  --crop                  JSON {"x":..,"y":..,"width":..,"height":..} region (CSS px,
+                          relative to the original image) to crop before annotating;
+                          annotation coordinates stay in original-image space
   --redact-patterns       JSON array of regex strings; matched label/callout text
                           boxes are covered with solid redact rectangles
                           (annotation boxes only, no OCR; not usable with svg)
@@ -155,7 +159,7 @@ async function runStepGuideCommand(args) {
   });
 
   try {
-    const result = await annotateImage(inputPath, outputPath, annotations, { theme, outputFormat, quality, devicePixelRatio: dpr });
+    const result = await annotateImage(inputPath, outputPath, annotations, { theme, sketch: args.sketch === true, outputFormat, quality, devicePixelRatio: dpr });
     console.log(`✓ Step guide created: ${result.outputPath}`);
     console.log(`  Steps: ${steps.length}`);
   } catch (err) {
@@ -206,14 +210,26 @@ async function runAnnotateCommand(args) {
     }
   }
 
+  let crop;
+  if (args.crop) {
+    try {
+      crop = typeof args.crop === 'string' ? JSON.parse(args.crop) : args.crop;
+    } catch (e) {
+      console.error('Error parsing crop JSON:', e.message);
+      process.exit(1);
+    }
+  }
+
   try {
     const result = await annotateImage(inputPath, outputPath, annotations, {
       theme,
+      sketch: args.sketch === true,
       outputFormat,
       quality,
       devicePixelRatio,
       canvasPadding,
-      redactPatterns
+      redactPatterns,
+      crop
     });
     console.log(`✓ Annotated image saved: ${result.outputPath}`);
     console.log(`  Dimensions: ${result.width}x${result.height}`);

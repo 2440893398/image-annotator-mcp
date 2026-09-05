@@ -31,6 +31,55 @@ describe('server.js', () => {
     ]);
   });
 
+  it('declares every renderer capability in the annotate_screenshot schema', () => {
+    const annotateTool = serverModule.tools.find((tool) => tool.name === 'annotate_screenshot');
+    const itemProps = annotateTool.inputSchema.properties.annotations.items.properties;
+    expect(itemProps.type.enum).toEqual([
+      'marker', 'arrow', 'curved-arrow', 'callout', 'rect', 'circle', 'ellipse', 'label',
+      'highlight', 'redact', 'blur', 'connector', 'icon', 'measure', 'leadout',
+      'bracket-label', 'spotlight', 'magnifier'
+    ]);
+    for (const field of ['headStyle', 'heads', 'fill', 'fillStyle', 'padding', 'fontWeight', 'borderColor', 'rx', 'ry', 'maxWidth', 'lineStyle']) {
+      expect(itemProps[field]).toBeDefined();
+    }
+    expect(annotateTool.inputSchema.properties.crop).toBeDefined();
+    expect(annotateTool.inputSchema.properties.crop.required).toEqual(['x', 'y', 'width', 'height']);
+  });
+
+  it('offers the sketch theme on create_step_guide', () => {
+    const stepTool = serverModule.tools.find((tool) => tool.name === 'create_step_guide');
+    expect(stepTool.inputSchema.properties.theme.enum).toContain('sketch');
+    expect(stepTool.inputSchema.properties.sketch).toBeDefined();
+  });
+
+  it('passes sketch through to step guides and warns past 7 steps', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'server-step-sketch-'));
+    const inputPath = path.join(tempDir, 'input.png');
+    fs.writeFileSync(inputPath, 'placeholder');
+
+    annotate.annotateImage.mockResolvedValue({
+      outputPath: path.join(tempDir, 'guide.png'),
+      width: 200,
+      height: 200,
+      annotationCount: 8,
+      warnings: [],
+      altText: 'guide'
+    });
+
+    const steps = Array.from({ length: 8 }, (_, i) => ({ x: 10 + i, y: 10, label: `Step ${i + 1}` }));
+    const result = await serverModule.handleStepGuide({
+      input_path: inputPath,
+      steps,
+      sketch: true,
+      theme: 'sketch'
+    });
+
+    const options = annotate.annotateImage.mock.calls[0][3];
+    expect(options.sketch).toBe(true);
+    expect(options.theme).toBe('sketch');
+    expect(result.content[0].text).toContain('exceeds the 5-7 step best-practice range');
+  });
+
   it('builds output paths using requested output format', () => {
     const output = serverModule.getOutputPath('/tmp/example.png', '-annotated', 'webp');
     expect(output).toBe(path.join('/tmp', 'example-annotated.webp'));

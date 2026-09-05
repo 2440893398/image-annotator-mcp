@@ -24,7 +24,7 @@ function getOutputPath(inputPath, suffix = '-annotated', outputFormat = null) {
 }
 
 async function handleAnnotate(args) {
-  const { input_path, output_path, annotations, theme, sketch, output_format, quality, device_pixel_ratio, canvas_padding, redact_patterns } = args;
+  const { input_path, output_path, annotations, theme, sketch, output_format, quality, device_pixel_ratio, canvas_padding, redact_patterns, crop } = args;
 
   if (!fs.existsSync(input_path)) {
     throw new FileNotFoundError(input_path);
@@ -38,7 +38,8 @@ async function handleAnnotate(args) {
     quality,
     devicePixelRatio: device_pixel_ratio,
     canvasPadding: canvas_padding,
-    redactPatterns: redact_patterns
+    redactPatterns: redact_patterns,
+    crop
   });
 
   const warningLines = result.warnings && result.warnings.length
@@ -84,7 +85,7 @@ async function handleDimensions(args) {
 }
 
 async function handleStepGuide(args) {
-  const { input_path, output_path, steps, connect_steps = true, theme, output_format, quality, device_pixel_ratio, canvas_padding } = args;
+  const { input_path, output_path, steps, connect_steps = true, theme, sketch, output_format, quality, device_pixel_ratio, canvas_padding } = args;
 
   if (!fs.existsSync(input_path)) {
     throw new FileNotFoundError(input_path);
@@ -98,16 +99,23 @@ async function handleStepGuide(args) {
   const finalPath = output_path || getOutputPath(input_path, '-guide', output_format || null);
   const result = await annotateImage(input_path, finalPath, annotations, {
     theme,
+    sketch: sketch === true,
     outputFormat: output_format,
     quality,
     devicePixelRatio: device_pixel_ratio,
     canvasPadding: canvas_padding
   });
 
+  // Documentation best practice caps a sequence at 5-7 steps; beyond that the
+  // guide should be split rather than crammed onto one screenshot.
+  const stepCountNote = steps.length > 7
+    ? `\n  Warning: ${steps.length} steps exceeds the 5-7 step best-practice range for a single guide image. Consider splitting the flow into multiple screenshots.`
+    : '';
+
   return {
     content: [{
       type: 'text',
-      text: `✓ Step guide created: ${result.outputPath}\n  Steps: ${steps.length}`
+      text: `✓ Step guide created: ${result.outputPath}\n  Steps: ${steps.length}${stepCountNote}`
     }]
   };
 }
