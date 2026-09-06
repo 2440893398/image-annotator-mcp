@@ -1,4 +1,4 @@
-const path = require('path');
+﻿const path = require('path');
 const fs = require('fs');
 const {
   annotateImage,
@@ -24,7 +24,7 @@ function getOutputPath(inputPath, suffix = '-annotated', outputFormat = null) {
 }
 
 async function handleAnnotate(args) {
-  const { input_path, output_path, annotations, theme, sketch, output_format, quality, device_pixel_ratio, canvas_padding, redact_patterns, crop, background, auto_layout } = args;
+  const { input_path, output_path, annotations, theme, sketch, output_format, quality, device_pixel_ratio, canvas_padding, redact_patterns, crop, background, auto_layout, active } = args;
 
   if (!fs.existsSync(input_path)) {
     throw new FileNotFoundError(input_path);
@@ -41,7 +41,8 @@ async function handleAnnotate(args) {
     redactPatterns: redact_patterns,
     crop,
     background,
-    autoLayout: auto_layout === true
+    autoLayout: auto_layout === true,
+    active: typeof active === 'number' ? active : null
   });
 
   const warningLines = result.warnings && result.warnings.length

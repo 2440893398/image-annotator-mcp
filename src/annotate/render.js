@@ -77,28 +77,28 @@ const COLORS = {
 
 const THEMES = {
   documentation: {
-    marker: { color: 'primary', size: 32 },
+    marker: { color: 'primary' },
     arrow: { color: 'primary', strokeWidth: 5 },
     label: { color: 'primary', fontSize: 20, background: 'white', font: 'Inter' },
     callout: { color: 'primary', background: 'white', font: 'Inter' },
     leadout: { color: 'primary', font: 'Inter' }
   },
   tutorial: {
-    marker: { color: 'green', size: 36 },
+    marker: { color: 'green' },
     arrow: { color: 'green', strokeWidth: 6 },
     label: { color: 'darkGray', fontSize: 22, background: 'lightGray', font: 'Nunito' },
     callout: { color: 'green', background: 'white', font: 'Nunito' },
     leadout: { color: 'green', font: 'Nunito' }
   },
   bugReport: {
-    marker: { color: 'error', size: 32 },
+    marker: { color: 'error' },
     arrow: { color: 'error', strokeWidth: 5 },
     label: { color: 'error', fontSize: 20, background: 'white', font: 'JetBrains Mono' },
     callout: { color: 'error', background: 'white', font: 'JetBrains Mono' },
     leadout: { color: 'error', font: 'JetBrains Mono' }
   },
   highlight: {
-    marker: { color: 'warning', size: 32 },
+    marker: { color: 'warning' },
     arrow: { color: 'warning', strokeWidth: 5 },
     label: { color: 'darkGray', fontSize: 20, background: 'yellow', font: 'Noto Sans' },
     callout: { color: 'warning', background: 'yellow', font: 'Noto Sans' },
@@ -116,12 +116,16 @@ const THEMES = {
   }
 };
 
+// markerSize is a RADIUS, so these are 20-40px discs. They used to be twice
+// that - a 1280-1920px screenshot picked the 'l' preset and got an 80px circle,
+// roughly three times what Snagit/Scribe/CleanShot draw - which made a page
+// with more than a couple of steps unreadable under its own annotations.
 const SIZE_PRESETS = {
-  xs: { markerSize: 20, strokeWidth: 3, fontSize: 12 },
-  s: { markerSize: 24, strokeWidth: 4, fontSize: 14 },
-  m: { markerSize: 32, strokeWidth: 5, fontSize: 18 },
-  l: { markerSize: 40, strokeWidth: 6, fontSize: 22 },
-  xl: { markerSize: 48, strokeWidth: 8, fontSize: 28 }
+  xs: { markerSize: 10, strokeWidth: 3, fontSize: 12 },
+  s: { markerSize: 12, strokeWidth: 4, fontSize: 14 },
+  m: { markerSize: 14, strokeWidth: 5, fontSize: 18 },
+  l: { markerSize: 16, strokeWidth: 6, fontSize: 22 },
+  xl: { markerSize: 20, strokeWidth: 8, fontSize: 28 }
 };
 
 const OUTPUT_FORMAT_EXTENSIONS = {
@@ -461,25 +465,181 @@ function resetIdGenerator() {
   customIdGenerator = null;
 }
 
-function createDropShadow(id, blur = 4, opacity = 0.3, dx = 2, dy = 2) {
+/**
+ * Drop shadow filter.
+ *
+ * The default region is a percentage of the element's bounding box, which is
+ * fine for anything with area but silently destroys axis-aligned strokes: a
+ * perfectly horizontal line has a zero-height box, the region collapses to
+ * nothing, and the whole element stops rendering in raster output (SVG 1.1
+ * §7.11). Shapes that can end up axis-aligned therefore pass explicit
+ * user-space `bounds`; everything else keeps the cheap bounding-box region
+ * rather than paying for a needlessly large filter surface.
+ */
+function createDropShadow(id, blur = 4, opacity = 0.3, dx = 2, dy = 2, bounds = null) {
+  const region = bounds
+    ? `filterUnits="userSpaceOnUse" x="${bounds.x}" y="${bounds.y}" width="${bounds.width}" height="${bounds.height}"`
+    : 'x="-50%" y="-50%" width="200%" height="200%"';
   return `
-    <filter id="${id}" x="-50%" y="-50%" width="200%" height="200%">
+    <filter id="${id}" ${region}>
       <feDropShadow dx="${dx}" dy="${dy}" stdDeviation="${blur}" flood-opacity="${opacity}"/>
     </filter>
   `;
 }
 
-function createMarker({ x, y, number = 1, color = 'red', size = 32, shadow = true, style = 'filled', halo = false, sketch = false, roughness = 1, seed = 1 }) {
-  const c = getColor(color);
+/**
+ * User-space filter region covering `points`, padded for stroke width, arrow
+ * heads, and the shadow's own blur and offset. Never degenerate, because the
+ * padding applies on both axes.
+ */
+function strokeFilterBounds(points, padding) {
+  const xs = points.map((point) => point[0]);
+  const ys = points.map((point) => point[1]);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  return {
+    x: minX - padding,
+    y: minY - padding,
+    width: (Math.max(...xs) - minX) + padding * 2,
+    height: (Math.max(...ys) - minY) + padding * 2
+  };
+}
 
-  if (sketch === true) {
-    const isBadge = style === 'badge';
-    const badgeWidth = number > 9 ? size * 2.4 : size * 2;
-    const solid = style !== 'outline';
-    // Solid markers trade the gradient for a flat fill with a darker outline.
+// Non-active markers fall back to this slate when the caller passes a
+// top-level `active` step. Dark enough to carry a white numeral at 20px.
+const MARKER_NEUTRAL = '#475569';
+
+// Clearance between an attached marker's edge and its target box, and the
+// x below which 'auto' gives up on a left-hand rail.
+const MARKER_ATTACH_GAP = 6;
+const MARKER_AUTO_LEFT_MIN = 60;
+
+const MARKER_FONT = 'Arial, Helvetica, sans-serif';
+
+// Marker geometry is all derived from `size`, so raw arithmetic leaks values
+// like 15.400000000000002 into the markup. Two decimals is well past sub-pixel
+// and keeps both the SVG and its snapshots readable.
+const px = (value) => Math.round(value * 100) / 100;
+
+/**
+ * A marker's `target`: the element it refers to, as [x, y, width, height].
+ * Width and height are optional - two numbers describe a bare point, which is
+ * all a caller has when they know where to point but not how big the thing is.
+ */
+function normalizeMarkerTarget(target) {
+  if (!Array.isArray(target) || target.length < 2) return null;
+  const num = (value) => (typeof value === 'number' && isFinite(value) ? value : null);
+  const x = num(target[0]);
+  const y = num(target[1]);
+  if (x === null || y === null) return null;
+  const w = Math.max(0, num(target[2]) || 0);
+  const h = Math.max(0, num(target[3]) || 0);
+  return { x, y, w, h, cx: x + w / 2, cy: y + h / 2 };
+}
+
+/**
+ * Which side of the target an attached marker sits on.
+ *
+ * 'auto' keeps a run of markers in one left-hand rail - both the reading order
+ * and what stops eight markers from scattering - and only flips right when the
+ * target sits too close to the left edge for the rail to fit. The decision uses
+ * the target box alone, never the canvas, so render.js and
+ * runtime.getBoundingBox cannot disagree about where the marker landed.
+ */
+function resolveMarkerAttachSide(attach, box) {
+  if (!box) return null;
+  if (attach === 'left' || attach === 'right' || attach === 'top' || attach === 'bottom') return attach;
+  if (attach !== 'auto') return null;
+  return box.x < MARKER_AUTO_LEFT_MIN ? 'right' : 'left';
+}
+
+/**
+ * Where a marker is actually drawn, plus the leader tick back to its target.
+ *
+ * Without `attach` this is just the caller's x/y (or the centre of `target`) -
+ * the historical behaviour of drawing on top of the thing being numbered. With
+ * `attach` the marker moves outside the target box instead, which is the
+ * balloon-and-leader convention from technical illustration and the only way to
+ * number an 18px checkbox without covering it.
+ *
+ * Exported because runtime.getBoundingBox has to reason about the drawn
+ * position, not the requested one, or auto-layout would resolve the wrong box.
+ */
+function resolveMarkerPlacement(annotation, size) {
+  const box = normalizeMarkerTarget(annotation.target);
+  // `attach` turns itself on as soon as a target box is given: a caller who
+  // passes the element's bounds is asking the marker to relate to it, and
+  // covering it is never the useful reading.
+  const attach = annotation.attach !== undefined ? annotation.attach : (box ? 'auto' : 'none');
+  const side = resolveMarkerAttachSide(attach, box);
+
+  if (!box) return { x: annotation.x, y: annotation.y, side: null, leader: null };
+  if (!side) return { x: box.cx, y: box.cy, side: null, leader: null };
+
+  const gap = size + MARKER_ATTACH_GAP;
+  const centres = {
+    left: [box.x - gap, box.cy],
+    right: [box.x + box.w + gap, box.cy],
+    top: [box.cx, box.y - gap],
+    bottom: [box.cx, box.y + box.h + gap]
+  };
+  const edges = {
+    left: [box.x - 2, box.cy],
+    right: [box.x + box.w + 2, box.cy],
+    top: [box.cx, box.y - 2],
+    bottom: [box.cx, box.y + box.h + 2]
+  };
+  const [cx, cy] = centres[side];
+  return { x: cx, y: cy, side, leader: { from: [cx, cy], to: edges[side] } };
+}
+
+function createMarker(annotation) {
+  const {
+    number = 1, color = 'red', size = 14, shadow = false, style = 'filled',
+    halo = true, leader = true, sketch = false, roughness = 1, seed = 1
+  } = annotation;
+  const c = getColor(color);
+  const placement = resolveMarkerPlacement(annotation, size);
+  const { x, y } = placement;
+  if (typeof x !== 'number' || !isFinite(x) || typeof y !== 'number' || !isFinite(y)) {
+    log('WARN', 'Marker annotation has neither usable x/y nor target; skipping.');
+    return null;
+  }
+
+  const label = String(number);
+  const isBadge = style === 'badge';
+  const badgeWidth = px(label.length > 1 ? size * 2.4 : size * 2);
+  // Small discs need proportionally larger digits than the old 64px ones did;
+  // two digits shrink so they stay inside instead of spilling over the edge.
+  const fontSize = px(label.length > 1 ? size * 0.95 : size * 1.1);
+  // A white casing ring - not a drop shadow - is what keeps a 28px marker
+  // legible over arbitrary UI. Same recipe as leadout's dot and map labels.
+  const casing = px(Math.max(2, size * 0.18));
+  const ring = px(Math.max(1.25, size * 0.11));
+  const sketchOn = sketch === true && getRoughGenerator() !== null;
+
+  const numeral = (fill, fontFamily) => `<text x="${px(x)}" y="${px(y + fontSize * 0.35)}" text-anchor="middle" fill="${fill}"
+            font-size="${px(fontSize)}" font-weight="bold" font-family="${fontFamily}">${escapeXml(number)}</text>`;
+
+  const casingMarkup = halo !== true ? '' : (isBadge
+    ? `<rect x="${px(x - badgeWidth / 2 - casing)}" y="${px(y - size - casing)}" width="${px(badgeWidth + casing * 2)}" height="${px(size * 2 + casing * 2)}" rx="${px(size + casing)}" fill="rgba(255,255,255,0.9)"/>\n`
+    : `<circle cx="${px(x)}" cy="${px(y)}" r="${px(size + casing)}" fill="rgba(255,255,255,0.9)"/>\n`);
+
+  let leaderMarkup = '';
+  if (leader !== false && placement.leader) {
+    const [lx1, ly1] = placement.leader.from;
+    const [lx2, ly2] = placement.leader.to;
+    const ink = sketchOn
+      ? sketchShape('line', [lx1, ly1, lx2, ly2], sketchOptions({ stroke: c, strokeWidth: ring, roughness, seed: seed + 3 }))
+      : `<line x1="${px(lx1)}" y1="${px(ly1)}" x2="${px(lx2)}" y2="${px(ly2)}" stroke="${c}" stroke-width="${ring}" stroke-linecap="round"/>`;
+    leaderMarkup = `<line x1="${px(lx1)}" y1="${px(ly1)}" x2="${px(lx2)}" y2="${px(ly2)}" stroke="rgba(255,255,255,0.9)" stroke-width="${px(ring + casing)}" stroke-linecap="round"/>\n${ink || ''}\n`;
+  }
+
+  if (sketchOn) {
+    const solid = style !== 'outline' && style !== 'ghost';
     const opts = sketchOptions({
       stroke: solid ? adjustColor(c, -40) : c,
-      strokeWidth: 2.5,
+      strokeWidth: Math.max(1.5, size * 0.16),
       fill: solid ? c : '#FFFFFF',
       fillStyle: 'solid',
       roughness,
@@ -490,13 +650,7 @@ function createMarker({ x, y, number = 1, color = 'red', size = 32, shadow = tru
       : sketchShape('circle', [x, y, size * 2], opts);
     if (shape) {
       const textColor = solid ? getRedactLabelColor(c) : c;
-      // Crisp white casing under the wobbly shape, same trick as the leadout dot.
-      const casing = halo !== true ? '' : (isBadge
-        ? `<rect x="${x - badgeWidth / 2 - 3}" y="${y - size - 3}" width="${badgeWidth + 6}" height="${size * 2 + 6}" rx="${size + 3}" fill="rgba(255,255,255,0.9)"/>\n`
-        : `<circle cx="${x}" cy="${y}" r="${size + 3}" fill="rgba(255,255,255,0.9)"/>\n`);
-      const numeral = `<text x="${x}" y="${y + size * 0.35}" text-anchor="middle" fill="${textColor}"
-            font-size="${size * 0.9}" font-weight="bold" font-family="${HANDWRITING_FONT}">${escapeXml(number)}</text>`;
-      return { defs: '', element: casing + shape + '\n' + numeral };
+      return { defs: '', element: leaderMarkup + casingMarkup + shape + '\n' + numeral(textColor, HANDWRITING_FONT) };
     }
   }
 
@@ -507,49 +661,35 @@ function createMarker({ x, y, number = 1, color = 'red', size = 32, shadow = tru
   if (shadow) {
     defs.push(createDropShadow(`${id}-shadow`));
   }
-
-  const gradientId = `${id}-gradient`;
-  defs.push(`
-    <linearGradient id="${gradientId}" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" style="stop-color:${c};stop-opacity:1" />
-      <stop offset="100%" style="stop-color:${adjustColor(c, -30)};stop-opacity:1" />
-    </linearGradient>
-  `);
-
   const filterAttr = shadow ? `filter="url(#${id}-shadow)"` : '';
 
-  if (halo === true) {
-    if (style === 'badge') {
-      const haloWidth = (number > 9 ? size * 2.4 : size * 2) + 6;
-      const haloHeight = size * 2 + 6;
-      elements.push(`<rect x="${x - haloWidth / 2}" y="${y - haloHeight / 2}" width="${haloWidth}" height="${haloHeight}" rx="${haloHeight / 2}" fill="rgba(255,255,255,0.9)"/>`);
-    } else {
-      elements.push(`<circle cx="${x}" cy="${y}" r="${size + 3}" fill="rgba(255,255,255,0.9)"/>`);
-    }
-  }
+  if (leaderMarkup) elements.push(leaderMarkup);
+  if (casingMarkup) elements.push(casingMarkup);
 
-  if (style === 'filled') {
+  if (style === 'outline') {
     elements.push(`
-      <circle cx="${x}" cy="${y}" r="${size}" fill="url(#${gradientId})" ${filterAttr}/>
-      <circle cx="${x}" cy="${y}" r="${size - 2}" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
-      <text x="${x}" y="${y + size * 0.35}" text-anchor="middle" fill="white"
-            font-size="${size * 0.9}" font-weight="bold" font-family="Arial, Helvetica, sans-serif">${escapeXml(number)}</text>
+      <circle cx="${x}" cy="${y}" r="${px(size)}" fill="white" stroke="${c}" stroke-width="${px(Math.max(2, size * 0.16))}" ${filterAttr}/>
+      ${numeral(c, MARKER_FONT)}
     `);
-  } else if (style === 'outline') {
+  } else if (style === 'ghost') {
+    // Quiet series: the accent survives as the ring and the numeral, but eight
+    // of these read as one sequence instead of as eight alarms.
     elements.push(`
-      <circle cx="${x}" cy="${y}" r="${size}" fill="white" stroke="${c}" stroke-width="3" ${filterAttr}/>
-      <text x="${x}" y="${y + size * 0.35}" text-anchor="middle" fill="${c}"
-            font-size="${size * 0.9}" font-weight="bold" font-family="Arial, Helvetica, sans-serif">${escapeXml(number)}</text>
+      <circle cx="${px(x)}" cy="${px(y)}" r="${px(size)}" fill="${c}" fill-opacity="0.16" stroke="${c}" stroke-width="${ring}" ${filterAttr}/>
+      ${numeral(c, MARKER_FONT)}
     `);
-  } else if (style === 'badge') {
-    const isMultiDigit = number > 9;
-    const width = isMultiDigit ? size * 2.4 : size * 2;
-    const height = size * 2;
+  } else if (isBadge) {
     elements.push(`
-      <rect x="${x - width / 2}" y="${y - height / 2}" width="${width}" height="${height}"
-            rx="${height / 2}" fill="url(#${gradientId})" ${filterAttr}/>
-      <text x="${x}" y="${y + size * 0.35}" text-anchor="middle" fill="white"
-            font-size="${size * 0.9}" font-weight="bold" font-family="Arial, Helvetica, sans-serif">${escapeXml(number)}</text>
+      <rect x="${px(x - badgeWidth / 2)}" y="${px(y - size)}" width="${badgeWidth}" height="${px(size * 2)}"
+            rx="${px(size)}" fill="${c}" ${filterAttr}/>
+      ${numeral(getRedactLabelColor(c), MARKER_FONT)}
+    `);
+  } else {
+    // Flat fill. The old vertical gradient, inner white ring and drop shadow
+    // carried no information and tripled the visual weight of every marker.
+    elements.push(`
+      <circle cx="${px(x)}" cy="${px(y)}" r="${px(size)}" fill="${c}" ${filterAttr}/>
+      ${numeral(getRedactLabelColor(c), MARKER_FONT)}
     `);
   }
 
@@ -605,12 +745,13 @@ function createArrow({ from, to, color = 'red', strokeWidth = 2, style = 'solid'
 
   const id = generateId('arrow');
   const defs = [];
+  const headSize = Math.max(10, strokeWidth * 3);
 
   if (shadow) {
-    defs.push(createDropShadow(`${id}-shadow`, 2, 0.2));
+    defs.push(createDropShadow(`${id}-shadow`, 2, 0.2, 2, 2,
+      strokeFilterBounds(points, headSize + strokeWidth + 10)));
   }
 
-  const headSize = Math.max(10, strokeWidth * 3);
   if (headStyle === 'filled') {
     if (wantEnd) {
       defs.push(`
@@ -710,12 +851,16 @@ function createCurvedArrow({ from, to, curve = 50, color = 'red', strokeWidth = 
 
   const id = generateId('curved-arrow');
   const defs = [];
+  const headSize = Math.max(10, strokeWidth * 3);
 
   if (shadow) {
-    defs.push(createDropShadow(`${id}-shadow`, 2, 0.2));
+    // The quadratic stays inside the hull of its endpoints and control point,
+    // so those three points bound the region - including curve: 0, where the
+    // path degenerates to a straight (possibly axis-aligned) line.
+    defs.push(createDropShadow(`${id}-shadow`, 2, 0.2, 2, 2,
+      strokeFilterBounds([[x1, y1], [cx, cy], [x2, y2]], headSize + strokeWidth + 10)));
   }
 
-  const headSize = Math.max(10, strokeWidth * 3);
   defs.push(`
     <marker id="${id}-head" markerWidth="${headSize}" markerHeight="${headSize * 0.7}"
             refX="${headSize - 1}" refY="${headSize * 0.35}" orient="auto" markerUnits="userSpaceOnUse">
@@ -953,7 +1098,10 @@ function createPolyline({ points, closed = false, color = 'red', strokeWidth = 4
   const defs = [];
 
   if (shadow) {
-    defs.push(createDropShadow(`${id}-shadow`));
+    // Collinear points give a flat bounding box, which the default filter
+    // region cannot survive (see createDropShadow).
+    defs.push(createDropShadow(`${id}-shadow`, 4, 0.3, 2, 2,
+      strokeFilterBounds(points, strokeWidth + 16)));
   }
 
   const dashArray = style === 'dashed' ? 'stroke-dasharray="8,4"' : '';
@@ -1362,7 +1510,10 @@ function createMeasure({ from, to, text, color = 'red', fontSize = 16, strokeWid
   const sketchOn = sketch === true && getRoughGenerator() !== null;
 
   if (shadow && !sketchOn) {
-    defs.push(createDropShadow(`${id}-shadow`, 2, 0.15));
+    // A measure is axis-aligned in the common case, so its shaft needs an
+    // explicit region or the filter erases it (see createDropShadow).
+    defs.push(createDropShadow(`${id}-shadow`, 2, 0.15, 2, 2,
+      strokeFilterBounds([[x1, y1], [x2, y2]], strokeWidth + 10)));
   }
   const filterAttr = shadow && !sketchOn ? `filter="url(#${id}-shadow)"` : '';
 
@@ -1894,7 +2045,7 @@ function buildSvgParts(annotations, options = {}) {
     options = { theme: options };
   }
 
-  const { theme = null, defaultSizes = {}, customThemes = null, sketch = false } = options;
+  const { theme = null, defaultSizes = {}, customThemes = null, sketch = false, active = null } = options;
   // The 'sketch' theme implies the hand-drawn renderer for every annotation,
   // same as passing options.sketch = true.
   const sketchAll = sketch === true || theme === 'sketch';
@@ -1920,8 +2071,17 @@ function buildSvgParts(annotations, options = {}) {
       ? { ...themeDefaults[annotation.type], ...annotation }
       : annotation);
 
-    if (defaultSizes.markerSize && !mergedAnn.size && (mergedAnn.type === 'marker' || mergedAnn.type === 'number')) {
+    const isMarker = mergedAnn.type === 'marker' || mergedAnn.type === 'number';
+    if (defaultSizes.markerSize && !mergedAnn.size && isMarker) {
       mergedAnn = { ...mergedAnn, size: defaultSizes.markerSize };
+    }
+    // A top-level `active` step turns a run of markers into a real sequence:
+    // the current step keeps its colour and every other one drops to a neutral,
+    // so the reader's eye has somewhere to land. Eight equally loud markers
+    // carry no hierarchy at all, which is the usual complaint about numbering
+    // a dense page. Runs after assignMarkerNumbers so it sees drawn numbers.
+    if (typeof active === 'number' && isMarker && mergedAnn.number !== active) {
+      mergedAnn = { ...mergedAnn, color: MARKER_NEUTRAL };
     }
     if (defaultSizes.strokeWidth && !mergedAnn.strokeWidth && (mergedAnn.type === 'arrow' || mergedAnn.type === 'curved-arrow' || mergedAnn.type === 'connector')) {
       mergedAnn = { ...mergedAnn, strokeWidth: defaultSizes.strokeWidth };
@@ -2073,6 +2233,8 @@ const api = {
   resetIdGenerator,
   createDropShadow,
   createMarker,
+  resolveMarkerPlacement,
+  MARKER_NEUTRAL,
   createArrow,
   createCurvedArrow,
   createCallout,

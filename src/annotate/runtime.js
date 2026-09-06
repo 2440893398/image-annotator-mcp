@@ -22,6 +22,7 @@ const {
   getTextContentWidthPx,
   measureTextBlock,
   assignMarkerNumbers,
+  resolveMarkerPlacement,
   getColor,
   getLeadoutChipSize,
   escapeXml,
@@ -617,6 +618,10 @@ function scaleAnnotationCoords(annotation, dpr) {
 // is what stops leadout/magnifier from being silently left behind.
 const POINT_FIELDS = ['from', 'to', 'target', 'anchor'];
 
+// Sides a marker can be attached to, plus 'auto' (pick one) and 'none' (draw
+// on the target the way markers always did).
+const MARKER_ATTACH_SIDES = ['left', 'right', 'top', 'bottom', 'auto', 'none'];
+
 /**
  * Proportionally rescale one annotation's coordinates. Used by reannotate to
  * move annotations from a previous screenshot onto a resized one.
@@ -624,8 +629,17 @@ const POINT_FIELDS = ['from', 'to', 'target', 'anchor'];
 function remapAnnotation(annotation, scaleX, scaleY) {
   const scaled = { ...annotation };
   const scaleNum = (value, scale) => (typeof value === 'number' && isFinite(value)) ? Math.round(value * scale) : value;
+  // A marker's target is [x, y, width, height], so entries past the first two
+  // are a size and have to be rescaled as well; every other point field is two
+  // numbers long and slice(2) leaves nothing to do.
   const scalePoint = (point) => Array.isArray(point) && point.length >= 2
-    ? [scaleNum(point[0], scaleX), scaleNum(point[1], scaleY), ...point.slice(2)]
+    ? [
+      scaleNum(point[0], scaleX),
+      scaleNum(point[1], scaleY),
+      ...(point.length > 2 ? [scaleNum(point[2], scaleX)] : []),
+      ...(point.length > 3 ? [scaleNum(point[3], scaleY)] : []),
+      ...point.slice(4)
+    ]
     : point;
 
   if (typeof scaled.x === 'number') scaled.x = scaleNum(scaled.x, scaleX);
@@ -664,7 +678,10 @@ function estimateDimensionsFromAnnotations(annotations) {
 
     for (const field of POINT_FIELDS) {
       const point = annotation[field];
-      if (Array.isArray(point) && point.length >= 2) consider(point[0], point[1]);
+      if (!Array.isArray(point) || point.length < 2) continue;
+      consider(point[0], point[1]);
+      // A marker target is a box, so its far corner is the real extent.
+      if (point.length > 2) consider((point[0] || 0) + (point[2] || 0), (point[1] || 0) + (point[3] || 0));
     }
 
     if (Array.isArray(annotation.points)) {
@@ -862,7 +879,10 @@ function offsetAnnotationCoords(annotation, offsetX, offsetY) {
   if (shifted.y !== undefined) shifted.y += offsetY;
   if (Array.isArray(shifted.from)) shifted.from = [shifted.from[0] + offsetX, shifted.from[1] + offsetY];
   if (Array.isArray(shifted.to)) shifted.to = [shifted.to[0] + offsetX, shifted.to[1] + offsetY];
-  if (Array.isArray(shifted.target)) shifted.target = [shifted.target[0] + offsetX, shifted.target[1] + offsetY];
+  // slice(2) matters here: a marker target is [x, y, width, height], and
+  // rebuilding it as a bare pair silently collapsed the box to a point, so any
+  // padded/cropped image lost every attached marker's offset.
+  if (Array.isArray(shifted.target)) shifted.target = [shifted.target[0] + offsetX, shifted.target[1] + offsetY, ...shifted.target.slice(2)];
   if (Array.isArray(shifted.anchor)) shifted.anchor = [shifted.anchor[0] + offsetX, shifted.anchor[1] + offsetY];
   if (Array.isArray(shifted.points)) {
     shifted.points = shifted.points.map((point) => Array.isArray(point)
@@ -891,6 +911,9 @@ function generateAltText(annotations, imageWidth, imageHeight, options = {}) {
       details.push(`label "${annotation.text}"`);
     } else if (type === 'marker' && annotation.number !== undefined && annotation.x !== undefined && annotation.y !== undefined) {
       details.push(`marker #${annotation.number} at (${annotation.x},${annotation.y})`);
+    } else if (type === 'marker' && annotation.number !== undefined && Array.isArray(annotation.target) && annotation.target.length >= 2) {
+      // Attached markers have no x/y of their own; the target box locates them.
+      details.push(`marker #${annotation.number} on the element at (${annotation.target[0]},${annotation.target[1]})`);
     } else if (type === 'measure' && annotation.text) {
       details.push(`measure "${annotation.text}"`);
     } else if (type === 'leadout' && annotation.text) {
@@ -1044,9 +1067,23 @@ function getBoundingBox(annotation, sizePreset) {
       const size = typeof annotation.size === 'number' && isFinite(annotation.size)
         ? annotation.size
         : (preset.markerSize || SIZE_PRESETS.m.markerSize);
+      // An attached marker is drawn beside its target, not at the requested
+      // x/y, so the box has to follow the same placement the renderer used or
+      // auto-layout would shuffle the wrong rectangle around.
+      const placement = resolveMarkerPlacement(annotation, size);
+      if (typeof placement.x !== 'number' || !isFinite(placement.x)
+          || typeof placement.y !== 'number' || !isFinite(placement.y)) return null;
       // The badge style widens to size * 2.4 once the number reaches two digits.
       const halfWidth = annotation.style === 'badge' && annotation.number > 9 ? size * 1.2 : size;
-      return { x: annotation.x - halfWidth, y: annotation.y - size, w: halfWidth * 2, h: size * 2 };
+      // The white casing ring adds real ink beyond the disc; count it so two
+      // neighbouring markers are not judged clear when their rings touch.
+      const casing = Math.max(2, size * 0.18);
+      return {
+        x: placement.x - halfWidth - casing,
+        y: placement.y - size - casing,
+        w: (halfWidth + casing) * 2,
+        h: (size + casing) * 2
+      };
     }
     case 'arrow':
     case 'curved-arrow': {
@@ -1275,6 +1312,27 @@ function resolveCollisions(annotations, sizePreset, canvasWidth, canvasHeight) {
       const opposite = { bottom: 'top', top: 'bottom', left: 'right', right: 'left' }[current];
       candidates = [opposite, ...['top', 'bottom', 'left', 'right'].filter((p) => p !== current && p !== opposite)]
         .map((pointer) => ({ pointer }));
+    } else if (annotation.type === 'marker' || annotation.type === 'number') {
+      // Numbering a dense page is exactly the case that needs auto-layout, and
+      // markers used to be skipped here entirely. A marker that knows its
+      // target box can be moved to another side of it; one that only has an
+      // x/y has nothing to attach to, so it steps out along the compass
+      // instead, keeping its leader-free look.
+      if (Array.isArray(annotation.target)) {
+        const current = annotation.attach && annotation.attach !== 'auto' ? annotation.attach : null;
+        candidates = ['left', 'right', 'top', 'bottom']
+          .filter((side) => side !== current)
+          .map((attach) => ({ attach }));
+      } else if (typeof annotation.x === 'number' && typeof annotation.y === 'number') {
+        const size = typeof annotation.size === 'number' && isFinite(annotation.size)
+          ? annotation.size
+          : ((SIZE_PRESETS[sizePreset] || SIZE_PRESETS.m).markerSize);
+        const step = size * 2.4;
+        candidates = [[0, -1], [1, 0], [0, 1], [-1, 0], [1, -1], [1, 1], [-1, 1], [-1, -1]]
+          .map(([dx, dy]) => ({ x: annotation.x + dx * step, y: annotation.y + dy * step }));
+      } else {
+        continue;
+      }
     } else {
       continue;
     }
@@ -1331,11 +1389,20 @@ function detectCollisions(annotations, sizePreset) {
 }
 
 function getAnnotationAriaLabel(annotation, index) {
+  // A marker can carry its position as a target box instead of x/y, in which
+  // case the box is the only thing that locates it - saying "with no position"
+  // would drop the one useful fact a screen reader has about it.
+  const isMarker = annotation.type === 'marker' || annotation.type === 'number';
+  const targetBox = isMarker && Array.isArray(annotation.target) && annotation.target.length >= 2
+    ? annotation.target
+    : null;
   const position = annotation.from && annotation.to
     ? `from ${annotation.from[0]},${annotation.from[1]} to ${annotation.to[0]},${annotation.to[1]}`
     : typeof annotation.x === 'number' && typeof annotation.y === 'number'
       ? `at ${annotation.x},${annotation.y}`
-      : 'with no position';
+      : targetBox
+        ? `on the element at ${targetBox[0]},${targetBox[1]}`
+        : 'with no position';
 
   switch (annotation.type) {
     case 'marker':
@@ -1419,9 +1486,18 @@ function validateAnnotation(annotation) {
   if (typeof annotation.type !== 'string') {
     throw new ValidationError('Annotation must have a type');
   }
-  if (annotation.type === 'marker') {
-    if (typeof annotation.x !== 'number' || typeof annotation.y !== 'number') {
-      throw new ValidationError('Marker annotations require x and y coordinates');
+  if (annotation.type === 'marker' || annotation.type === 'number') {
+    const hasPoint = typeof annotation.x === 'number' && typeof annotation.y === 'number';
+    const hasTarget = Array.isArray(annotation.target) && annotation.target.length >= 2
+      && annotation.target.slice(0, 2).every((value) => typeof value === 'number' && isFinite(value));
+    if (!hasPoint && !hasTarget) {
+      throw new ValidationError('Marker annotations require x and y coordinates, or a target [x, y, width, height]');
+    }
+    if (annotation.attach !== undefined && !MARKER_ATTACH_SIDES.includes(annotation.attach)) {
+      throw new ValidationError(`Marker attach must be one of ${MARKER_ATTACH_SIDES.join(', ')}`);
+    }
+    if (annotation.attach !== undefined && annotation.attach !== 'none' && !hasTarget) {
+      throw new ValidationError('Marker attach needs a target [x, y, width, height] to attach to');
     }
   }
   if (annotation.type === 'arrow' || annotation.type === 'curved-arrow' || annotation.type === 'connector' || annotation.type === 'measure' || annotation.type === 'bracket-label') {

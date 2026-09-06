@@ -1,9 +1,31 @@
-# Changelog
+﻿# Changelog
 
 ## Unreleased
 
 ### Added
 
+- **`target` and `attach` on markers** — pass the element's bounding box as
+  `target: [x, y, width, height]` (a Playwright `boundingBox()` drops straight
+  in; width/height optional) and the marker places itself *outside* that box
+  with a hairline white-cased leader back to the edge, instead of covering the
+  control it numbers. `attach` picks the side: `left`/`right`/`top`/`bottom`,
+  `auto` (the default once a target is given — prefers a left-hand rail so a
+  run of markers forms a column, flipping right near the canvas edge), or
+  `none` for the historical centred behaviour. `leader: false` drops the tick.
+  An 18px checkbox is now numberable; before, the marker simply swallowed it.
+- **`auto_layout` now moves markers**, which it never did — `resolveCollisions`
+  skipped every type except leadout and callout, so the one case that most
+  needs automatic spacing (a page with many numbers) got nothing. A marker with
+  a `target` tries the other sides of it; one with only `x`/`y` steps out along
+  the compass. `getBoundingBox` follows the drawn placement, and counts the
+  casing ring, so two markers are not judged clear when their rings touch.
+- **Top-level `active: <step>`** (MCP `active`, CLI `--active`): every marker
+  whose number differs is drawn in a neutral slate while the current step keeps
+  its colour. A screenshot can carry a whole sequence and still have one place
+  for the eye to land.
+- **`style: "ghost"` for markers** — tinted fill with an accent ring and
+  numeral, for a quiet series. Needs a light background to stay readable, so it
+  is opt-in rather than the default.
 - **Text auto-wrapping** for `callout`, `label`, and `leadout`: a callout's
   `width` now doubles as the wrap width, and all three accept `maxWidth`.
   Wrapping breaks CJK per character and latin at word boundaries, using the
@@ -52,8 +74,40 @@
   `fill`, `fillStyle`, `padding`, `fontWeight`, `borderColor`) so agents can
   discover them.
 
+### Documentation
+
+- Corrected and expanded the config-file docs (README, README.zh-CN,
+  `skills/image-annotator/references/config-ui.md`). Discovery was documented as
+  starting at the current working directory and searching 3 parent levels; it
+  actually starts at the **input image's directory** and searches 5. Added the
+  precedence rule that most often explains a surprising annotation size:
+  `defaultSizes` in a config file overrides the size presets for every image
+  beneath it, and `markerSize` is a radius. This repository's own root
+  `.image-annotator.json` (`markerSize: 44`, `theme: "tutorial"`) is called out
+  explicitly, since it applies to anything annotated from inside the repo.
+
 ### Fixed
 
+- Alt text and aria labels described a marker positioned by `target` alone as
+  having "no position", discarding the only locator a screen reader had. They
+  now report the element it points at.
+- **Canvas padding and cropping silently un-attached markers.**
+  `offsetAnnotationCoords` rebuilt `target` as a bare `[x, y]` pair, which
+  collapsed a marker's target box to a point, so any image with
+  `canvas_padding`, `crop`, or a `background` card placed its attached markers
+  against a zero-size box instead of the real element.
+- **Horizontal and vertical `arrow` and `measure` annotations vanished from
+  raster output.** Their drop shadow used a filter region in
+  objectBoundingBox units, and an axis-aligned stroke has a zero-height (or
+  zero-width) bounding box, which collapses the region to nothing and makes
+  the renderer drop the element — so a `measure` between two points on the
+  same row drew its end ticks and its label but no shaft, and a horizontal
+  arrow disappeared entirely. The SVG looked correct throughout, so this only
+  showed up in PNG/JPEG/WebP output; `sketch: true` was never affected
+  because it does not use the filter. `arrow`, `curved-arrow` (including
+  `curve: 0`), `measure`, and `polyline`/`polygon` with collinear points now
+  pass an explicit user-space filter region; shapes with area keep the
+  cheaper bounding-box region.
 - Multi-line `label` text used to run downward out of its background box;
   the text block is now bottom-anchored on the `y` baseline so every line
   stays inside (single-line output unchanged).
@@ -82,6 +136,26 @@
     rendering with a warning instead of failing.
 
 ### Changed
+
+- **Markers were redesigned for dense pages; existing calls render differently.**
+  Numbering a busy screen used to bury it, for three measurable reasons, all now
+  addressed:
+  - `SIZE_PRESETS.markerSize` is a **radius**, and the values were twice what
+    they should have been: a 1280-1920px screenshot picked the `l` preset and
+    got an **80px** circle, roughly three times what Snagit/Scribe/CleanShot
+    draw. Every preset is halved, giving 20-40px discs.
+  - The `filled` style stacked a vertical gradient, an inner white ring, and a
+    drop shadow on every marker. None carried information and together they
+    tripled its visual weight. It is now a flat disc with a **white casing
+    ring** (`halo`, on by default) — casing, not shadow, is what keeps a small
+    marker legible over arbitrary UI. `shadow` is now opt-in.
+  - The four built-in themes hardcoded `size: 32`/`36`, which beat the size
+    preset outright and put a 64px circle on every themed screenshot. Themes
+    now pick colours and fonts only.
+  Numerals were rescaled to suit a small disc (single digit `size * 1.1`, two
+  digits `size * 0.95`, so a two-digit number no longer spills over the edge),
+  and marker geometry is rounded to two decimals instead of emitting values like
+  `15.400000000000002`. Pass an explicit `size` to keep the old dimensions.
 
 - `leadout` visual redesign, following leader-line conventions from technical
   illustration and boundary-labeling research (see

@@ -1,4 +1,4 @@
-jest.mock('../../src/annotate', () => ({
+﻿jest.mock('../../src/annotate', () => ({
   annotateImage: jest.fn(),
   getImageDimensions: jest.fn(),
   COLORS: {},
@@ -123,7 +123,8 @@ describe('server.js', () => {
         devicePixelRatio: 2,
         canvasPadding: 50,
         redactPatterns: ['secret'],
-        autoLayout: false
+        autoLayout: false,
+        active: null
       }
     );
     expect(result.alt_text).toBe('Annotated image (200x200): 1 marker');

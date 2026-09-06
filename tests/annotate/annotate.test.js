@@ -1,4 +1,4 @@
-const fs = require('fs');
+﻿const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
@@ -333,13 +333,20 @@ describe('annotate.js', () => {
     });
 
     it('preserves defs id references used by gradients and filters', () => {
-      const svg = buildSvg(200, 200, [{ type: 'marker', x: 50, y: 50, number: 1 }]);
+      // Markers no longer carry a gradient or a shadow, so the reference this
+      // guards (SVGO must not rewrite ids out from under url(#...)) is checked
+      // against the shapes that still put things in <defs>: a callout's drop
+      // shadow and an arrow's head marker.
+      const svg = buildSvg(200, 200, [
+        { type: 'callout', x: 50, y: 50, text: 'hi' },
+        { type: 'arrow', from: [10, 10], to: [90, 90] }
+      ]);
       const optimized = optimizeSvg(svg);
 
-      expect(optimized).toContain('url(#marker-0000-gradient)');
-      expect(optimized).toContain('id="marker-0000-gradient"');
-      expect(optimized).toContain('url(#marker-0000-shadow)');
-      expect(optimized).toContain('id="marker-0000-shadow"');
+      expect(optimized).toContain('url(#callout-0000-shadow)');
+      expect(optimized).toContain('id="callout-0000-shadow"');
+      expect(optimized).toContain('url(#arrow-0001-head)');
+      expect(optimized).toContain('id="arrow-0001-head"');
     });
 
     it('falls back to original value when optimization input is invalid', () => {
@@ -796,41 +803,49 @@ describe('annotate.js', () => {
     it('should return bounding box for marker using sizePreset markerSize', () => {
       const ann = { type: 'marker', x: 100, y: 100 };
       const bb = getBoundingBox(ann, 'm');
-      // createMarker draws r = size, and size falls back to markerSize=32
-      expect(bb).toEqual({ x: 68, y: 68, w: 64, h: 64 });
+      // createMarker draws r = size (markerSize=14) plus a size*0.18 casing ring
+      expect(bb.x).toBeCloseTo(100 - 14 - 2.52);
+      expect(bb.y).toBeCloseTo(100 - 14 - 2.52);
+      expect(bb.w).toBeCloseTo((14 + 2.52) * 2);
+      expect(bb.h).toBeCloseTo((14 + 2.52) * 2);
     });
 
     it('should return bounding box for marker with xs preset', () => {
       const ann = { type: 'marker', x: 50, y: 50 };
       const bb = getBoundingBox(ann, 'xs');
-      // xs preset: markerSize=20 -> r=20
-      expect(bb).toEqual({ x: 30, y: 30, w: 40, h: 40 });
+      // xs preset: markerSize=10 -> r=10, casing clamps up to 2
+      expect(bb).toEqual({ x: 38, y: 38, w: 24, h: 24 });
     });
 
     it('should honour an explicit marker size over the preset', () => {
       const bb = getBoundingBox({ type: 'marker', x: 100, y: 100, size: 100 }, 'm');
-      expect(bb).toEqual({ x: 0, y: 0, w: 200, h: 200 });
+      expect(bb).toEqual({ x: -18, y: -18, w: 236, h: 236 });
     });
 
     it('should match the circle createMarker actually draws', () => {
       const ann = { type: 'marker', x: 100, y: 100, number: 1, size: 40 };
       const bb = getBoundingBox(ann, 'm');
       const svg = buildSvg(400, 400, [ann]);
-      const radius = Number(svg.match(/<circle cx="100" cy="100" r="(\d+)"/)[1]);
-      expect(bb.w).toBe(radius * 2);
-      expect(bb.h).toBe(radius * 2);
+      // Two concentric circles now: the white casing ring, then the disc. The
+      // box has to cover the casing, since that is the outermost ink drawn.
+      const radii = [...svg.matchAll(/<circle cx="100" cy="100" r="([\d.]+)"/g)]
+        .map((match) => Number(match[1]));
+      expect(radii).toContain(40);
+      expect(bb.w).toBe(Math.max(...radii) * 2);
+      expect(bb.h).toBe(Math.max(...radii) * 2);
     });
 
     it('should widen the box for multi-digit badge markers', () => {
       const bb = getBoundingBox({ type: 'marker', x: 100, y: 100, number: 12, size: 20, style: 'badge' }, 'm');
-      // createMarker uses size * 2.4 wide by size * 2 tall once number > 9
-      expect(bb.w).toBe(48);
-      expect(bb.h).toBe(40);
+      // createMarker uses size * 2.4 wide by size * 2 tall once number > 9,
+      // plus the size * 0.18 casing on every side
+      expect(bb.w).toBeCloseTo((20 * 1.2 + 3.6) * 2);
+      expect(bb.h).toBeCloseTo((20 + 3.6) * 2);
     });
 
     it('should treat the "number" type alias like a marker', () => {
       expect(getBoundingBox({ type: 'number', x: 50, y: 50, size: 10 }, 'm'))
-        .toEqual({ x: 40, y: 40, w: 20, h: 20 });
+        .toEqual({ x: 38, y: 38, w: 24, h: 24 });
     });
 
     it('should return bounding box for arrow using from/to endpoints', () => {
@@ -931,8 +946,9 @@ describe('annotate.js', () => {
     it('should default to m preset when sizePreset is invalid', () => {
       const ann = { type: 'marker', x: 100, y: 100 };
       const bb = getBoundingBox(ann, 'invalid');
-      // falls back to m: markerSize=32 -> r=32
-      expect(bb).toEqual({ x: 68, y: 68, w: 64, h: 64 });
+      // falls back to m: markerSize=14 -> r=14
+      expect(bb.w).toBeCloseTo((14 + 2.52) * 2);
+      expect(bb.h).toBeCloseTo((14 + 2.52) * 2);
     });
   });
 

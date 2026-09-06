@@ -1,10 +1,10 @@
-const tools = [
+﻿const tools = [
   {
     name: 'annotate_screenshot',
     description: `Add professional annotations to a screenshot image.
 
 Annotation types available:
-• marker - Numbered circles (1, 2, 3...) with gradient and shadow; "number" may be omitted and auto-increments in array order
+• marker - Small numbered discs (1, 2, 3...) with a white casing ring; "number" may be omitted and auto-increments in array order. Pass the element's box as "target" to place the marker beside the control instead of on top of it, and use the top-level "active" to grey out every step but the current one
 • arrow - Straight or elbow arrows ("lineStyle") with heads at either or both ends ("heads")
 • curved-arrow - Smooth curved arrows
 • callout - Text boxes with pointers (speech bubbles); wraps automatically when "width" or "maxWidth" is set
@@ -156,7 +156,12 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
         },
         auto_layout: {
           type: 'boolean',
-          description: 'Opt-in collision avoidance: when a leadout label chip or callout bubble overlaps another annotation, its anchor is mirrored around the target (leadout) or its pointer direction flipped (callout) to the first free position. Off by default because it moves coordinates you supplied explicitly; each move is reported as a warning.'
+          description: 'Opt-in collision avoidance: when a leadout chip, callout bubble, or marker overlaps another annotation, it is moved to the first free position — leadout anchors mirror around the target, callout pointers flip, markers with a target try the other sides of it and markers without one step out along the compass. Off by default because it moves coordinates you supplied explicitly; each move is reported as a warning.'
+        },
+        active: {
+          type: 'number',
+          minimum: 1,
+          description: 'Current step number. Markers whose number differs are drawn in a neutral slate so the reader has one place to look; the matching marker keeps its color. Use this when a screenshot carries a whole sequence but the surrounding text is talking about one step.'
         },
         redact_patterns: {
           type: 'array',
@@ -194,7 +199,9 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
               closed: { type: 'boolean', description: 'freehand only: connect the last point back to the first (default: false).' },
               from: { type: 'array', items: { type: 'number' }, description: '[x, y] start point' },
               to: { type: 'array', items: { type: 'number' }, description: '[x, y] end point' },
-              target: { type: 'array', items: { type: 'number' }, description: '[x, y] target point for leadout annotations' },
+              target: { type: 'array', items: { type: 'number' }, description: 'leadout/magnifier: [x, y] target point. marker: [x, y, width, height] bounding box of the element being numbered (width/height optional) — pass a Playwright boundingBox() here and the marker places itself beside the element instead of covering it. See "attach".' },
+              attach: { type: 'string', enum: ['left', 'right', 'top', 'bottom', 'auto', 'none'], description: 'marker only, needs "target": which side of the target the marker sits on, with a hairline leader back to the edge. Defaults to "auto" whenever target is given ("auto" prefers a left-hand rail and flips right near the left edge). "none" centers the marker on the target the old way, which covers small controls like checkboxes and icons.' },
+              leader: { type: 'boolean', description: 'marker only: draw the hairline tick from an attached marker back to its target edge (default: true).' },
               anchor: { type: 'array', items: { type: 'number' }, description: '[x, y] anchor point for leadout/magnifier text placement' },
               direction: { type: 'string', enum: ['top', 'bottom', 'left', 'right'], description: 'Direction for bracket-label or callout pointer' },
               zoom: { type: 'number', minimum: 1, maximum: 10, description: 'Zoom factor for magnifier (default: 2)' },
@@ -211,12 +218,12 @@ Colors: red, orange, yellow, green, blue, purple, pink, cyan, teal,
               size: { type: 'number', minimum: 0, description: 'Overall size for markers or icons in image pixels.' },
               fontSize: { type: 'number', minimum: 0, description: 'Text size in image pixels for labels and callouts.' },
               strokeWidth: { type: 'number', minimum: 0, description: 'Line thickness in image pixels for arrows, outlines, and connectors.' },
-              style: { type: 'string', enum: ['filled', 'outline', 'badge', 'solid', 'dashed'], description: 'marker: filled/outline/badge. Shapes and lines: solid/dashed.' },
+              style: { type: 'string', enum: ['filled', 'outline', 'badge', 'ghost', 'solid', 'dashed'], description: 'marker: filled (flat disc, default) / outline / badge / ghost (tinted fill with accent ring and numeral — a quiet series for pages that need many numbers; needs a light background to stay readable). Shapes and lines: solid/dashed.' },
               headStyle: { type: 'string', enum: ['filled', 'open'], description: 'Arrowhead shape for arrow/curved-arrow: "filled" (default) solid triangle, "open" V-shaped outline.' },
               heads: { type: 'string', enum: ['end', 'start', 'both', 'none'], description: 'Which ends of an arrow get a head (default: "end"). "both" makes a double-headed arrow for ranges/relationships; "none" is a plain shaft.' },
               variant: { type: 'string', enum: ['soft', 'filled', 'outline'], description: 'Leadout label chip style. "soft" (default): light tint of the accent with accent border and dark text — calm and readable. "filled": solid accent chip with auto-contrast text for maximum emphasis. "outline": white chip with accent border.' },
               lineStyle: { type: 'string', enum: ['elbow', 'straight'], description: 'Leader/shaft routing for leadout and arrow. "elbow" (leadout default) leaves the start at 45° then runs axis-aligned; "straight" (arrow default) connects directly. Use elbow arrows to route around content.' },
-              halo: { type: 'boolean', description: 'Draw a white casing under the graphic so it stays legible over busy content. Default true for leadout, false elsewhere. Supported by leadout, arrow/curved-arrow/connector (clean rendering, shaft only), marker (outer white ring), and background-less labels.' },
+              halo: { type: 'boolean', description: 'Draw a white casing under the graphic so it stays legible over busy content. Default true for leadout and marker, false elsewhere. Supported by leadout, arrow/curved-arrow/connector (clean rendering, shaft only), marker (outer white ring — this is what replaces the old drop shadow, so turning it off costs legibility), and background-less labels.' },
               bracketStyle: { type: 'string', enum: ['square', 'curly'], description: 'bracket-label shape: right-angled square bracket (default) or typographic curly brace.' },
               pointer: { type: 'string', enum: ['top', 'bottom', 'left', 'right'] },
               icon: { type: 'string', description: 'Built-in icon name (check, x, warning, info, question, lock, star, cursor, thumbs-up, thumbs-down, plus, minus, eye) or any emoji character, which is rendered directly without the badge circle (opt back in with "badge": true). Emoji rendering depends on the host OS emoji font.' },

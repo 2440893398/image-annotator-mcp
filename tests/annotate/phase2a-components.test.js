@@ -1,4 +1,4 @@
-const { buildSvg, setIdGenerator, resetIdGenerator } = require('../../src/annotate/render');
+﻿const { buildSvg, setIdGenerator, resetIdGenerator } = require('../../src/annotate/render');
 const { validateAnnotations, scaleAnnotationCoords, offsetAnnotationCoords, getBoundingBox } = require('../../src/annotate/runtime');
 
 beforeEach(() => {
@@ -133,7 +133,12 @@ describe('halo casing', () => {
 
   test('marker halo draws an outer white ring', () => {
     const svg = buildSvg(400, 300, [{ type: 'marker', x: 100, y: 100, number: 1, size: 20, halo: true }]);
-    expect(svg).toContain(`r="23" fill="${WHITE}"`);
+    // The casing scales with the marker now (size * 0.18, floored at 2px)
+    // and is on by default, because a small flat disc depends on it to
+    // stay legible over arbitrary UI.
+    expect(svg).toContain(`r="23.6" fill="${WHITE}"`);
+    expect(buildSvg(400, 300, [{ type: 'marker', x: 100, y: 100, size: 20 }])).toContain('r="23.6"');
+    expect(buildSvg(400, 300, [{ type: 'marker', x: 100, y: 100, size: 20, halo: false }])).not.toContain('r="23.6"');
   });
 
   test('background-less label halo underlays a white-stroked copy', () => {

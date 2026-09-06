@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 const fs = require('fs');
 const minimist = require('minimist');
@@ -40,7 +40,10 @@ Options:
   --background            Color string or JSON {"color"|"gradient":..,"padding":..,
                           "imageCornerRadius":..,"shadow":..} export card (padding,
                           rounded corners, drop shadow on a colored canvas)
-  --auto-layout           Move overlapping leadout/callout labels to a free position
+  --auto-layout           Move overlapping leadout/callout/marker annotations to a
+                          free position
+  --active                Current step number; every other marker is drawn in a
+                          neutral slate so one step stands out
   --redact-patterns       JSON array of regex strings; matched label/callout text
                           boxes are covered with solid redact rectangles
                           (annotation boxes only, no OCR; not usable with svg)
@@ -250,7 +253,8 @@ async function runAnnotateCommand(args) {
       redactPatterns,
       crop,
       background,
-      autoLayout: args['auto-layout'] === true
+      autoLayout: args['auto-layout'] === true,
+      active: args.active !== undefined ? Number(args.active) : null
     });
     console.log(`✓ Annotated image saved: ${result.outputPath}`);
     console.log(`  Dimensions: ${result.width}x${result.height}`);

@@ -1,4 +1,4 @@
-# 图片标注 MCP 服务器
+﻿# 图片标注 MCP 服务器
 
 专业的 MCP（模型上下文协议）服务器，用于为截图添加标记、箭头、标注等标注。支持与 Playwright MCP 无缝集成，适用于文档工作流。
 
@@ -7,7 +7,7 @@
 ## 功能特性
 
 - **多种标注类型**：标记、箭头、标注框、矩形、圆形、标签、高亮、模糊、连接线和图标
-- **专业样式**：渐变标记带阴影、可自定义颜色和主题
+- **专业样式**：紧凑的数字标记配白色描边环、可自定义颜色和主题
 - **主题支持**：文档、教程、错误报告、高亮等预设主题
 - **5 个 MCP 工具**：标注、尺寸获取、步骤指南、重新标注辅助和配置 UI
 - **混合分发模式**：支持 MCP 服务器、命令行工具 (CLI) 和可移植 Skills 包
@@ -76,7 +76,7 @@ npm install
 支持位图输出（`png`、`jpeg`、`webp`、`avif`）以及标注层 `svg` 输出。还支持 `redact_patterns`，用正则匹配标注文本并以实心矩形遮盖——**遮的是标注自身的文本框（含安全余量），不是截图底图中的原始内容**；不做 OCR；`svg` 输出下不可用。
 
 **标注类型：**
-- `marker` - 带渐变和阴影的数字圆形标记；省略 `number` 时按数组顺序自动从 1 递增
+- `marker` - 带白色描边环的小号数字圆点；省略 `number` 时按数组顺序自动从 1 递增。传入元素外框 `target: [x, y, width, height]` 可让标记贴在控件**旁边**而不是压在上面
 - `arrow` - 直线或折线箭头（`lineStyle`），可在任一端或两端画箭头（`heads`）
 - `curved-arrow` - 平滑曲线箭头
 - `callout` - 带指针的文字框（气泡标注）；设置 `width`/`maxWidth` 后自动换行
@@ -97,7 +97,25 @@ npm install
 - `spotlight` - 暗色遮罩挖洞聚焦
 - `magnifier` - 目标区域的圆形放大镜
 
-**顶层选项：** `crop`（按原图坐标裁剪后再标注）、`background`（CleanShot 风格出图卡片：留白 + 圆角 + 投影 + 纯色/渐变背景）、`auto_layout`（可选的 leadout/callout 标签避让）、`canvas_padding`、`device_pixel_ratio`、`sketch`、`redact_patterns`。
+**顶层选项：** `crop`（按原图坐标裁剪后再标注）、`background`（CleanShot 风格出图卡片：留白 + 圆角 + 投影 + 纯色/渐变背景）、`auto_layout`（可选的 leadout/callout/marker 避让）、`active`（只保留当前步骤的强调色）、`canvas_padding`、`device_pixel_ratio`、`sketch`、`redact_patterns`。
+
+### 在密集页面上做编号
+
+在信息密度高的界面上直接丢编号圆点，会把它们本该指向的控件盖住。下面三件事可以叠加使用：
+
+```json
+[
+  {"type": "marker", "target": [262, 96, 210, 30]},
+  {"type": "marker", "target": [486, 96, 96, 30]},
+  {"type": "marker", "target": [236, 190, 18, 18]}
+]
+```
+
+- **`target: [x, y, width, height]`** —— 元素的外框（Playwright 的 `boundingBox()` 可以直接传进来）。标记会自动放到框**外侧**，并画一条发丝引线连回去，18px 的复选框也不会被遮住。`width`/`height` 可省略。
+- **`attach`** —— 放哪一侧：`left`、`right`、`top`、`bottom`、`auto`（给了 `target` 时的默认值，优先靠左成列，靠近画布左边缘时翻到右侧），或 `none` 表示按旧行为压在目标中心。
+- **`auto_layout: true`** —— marker 现在也参与避让：有 `target` 的会尝试换一侧，只有 `x`/`y` 的会沿八个方向外移。
+- **`active: 5`** —— 除第 5 个以外的标记全部降为中性石板灰，整张图带着完整序列时视线仍有落点。
+- **`style: "ghost"`** —— 淡色填充 + 同色描边和数字，适合需要很多编号的安静序列；需要浅色背景才够清晰。
 
 **主题：** `documentation`、`tutorial`、`bugReport`、`highlight`、`sketch`
 
@@ -153,17 +171,19 @@ npm install
 
 ## 尺寸预设
 
-工具会根据图片宽度自动调整标注尺寸：
+工具会根据图片宽度自动调整标注尺寸。**标记尺寸是半径**，画出来的圆直径是表中数值的两倍：
 
-| 预设 | 图片宽度 | 标记尺寸 | 线条宽度 | 字体大小 |
-|------|----------|----------|----------|----------|
-| xs   | < 400px  | 20px     | 3px      | 12px     |
-| s    | 400-800px| 24px     | 4px      | 14px     |
-| m    | 800-1200px| 32px    | 5px      | 18px     |
-| l    | 1200-1920px| 40px   | 6px      | 22px     |
-| xl   | > 1920px | 48px     | 8px      | 28px     |
+| 预设 | 图片宽度 | 标记半径 | 圆直径 | 线条宽度 | 字体大小 |
+|------|----------|----------|--------|----------|----------|
+| xs   | < 400px  | 10px     | 20px   | 3px      | 12px     |
+| s    | 400-800px| 12px     | 24px   | 4px      | 14px     |
+| m    | 800-1200px| 14px    | 28px   | 5px      | 18px     |
+| l    | 1200-1920px| 16px   | 32px   | 6px      | 22px     |
+| xl   | > 1920px | 20px     | 40px   | 8px      | 28px     |
 
 默认情况下，系统会根据图片宽度自动选择合适的预设。您也可以在配置文件中手动指定预设。
+
+> 如果实际画出来的尺寸和上表对不上，多半是图片上方某处的 `.image-annotator.json` 设了 `defaultSizes`——见[配置文件](#配置文件)。那个文件的优先级高于这里的任何预设。
 
 ## 配置文件
 
@@ -177,11 +197,36 @@ npm install
 }
 ```
 
-**配置查找顺序：**
-1. 当前工作目录
-2. 父级目录（最多 3 层）
-3. 用户主目录
-4. 默认值
+**配置查找顺序。** 查找从**输入图片所在目录**开始（不是进程的工作目录），找到第一个就停：
+
+1. 输入图片自己的目录
+2. 它的父级目录，最多 5 层
+3. `~/.image-annotator.json`
+4. 内置默认值
+
+只会使用其中一个文件——不同层级找到的配置之间不会合并。
+
+**`defaultSizes` 会覆盖尺寸预设。** 这是最容易踩到的一项：截图上方任意一级的配置文件，都能替它下面所有图片钉死标注尺寸，[尺寸预设](#尺寸预设)算出什么都不作数。
+
+```json
+{ "defaultSizes": { "markerSize": 44, "strokeWidth": 1, "fontSize": 20 } }
+```
+
+这里的 `markerSize: 44` 是半径，也就是每个标记都变成 88px 的圆——比最大的预设还大一倍多。优先级从高到低：
+
+1. 标注自己的 `size` / `strokeWidth` / `fontSize`
+2. 配置文件里的 `defaultSizes`（覆盖在预设之上，所以只写部分字段就只覆盖那几个）
+3. `sizePreset` 指定的预设；为 `"auto"` 时按图片宽度自动选
+
+想在单次调用里绕开它而不改文件，可以通过库 API 显式传入配置：
+
+```js
+await annotateImage(input, output, annotations, {
+  config: { sizePreset: 'auto', theme: null, themes: null, defaultSizes: null }
+});
+```
+
+> 本仓库根目录自带一个 `.image-annotator.json`，其中 `defaultSizes.markerSize: 44`、`theme: "tutorial"`。在仓库内标注任何图片都会读到它，因此除非显式覆盖，实际输出不会与文档里写的默认值一致。
 
 ## 配置 UI
 
